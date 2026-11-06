@@ -1,11 +1,12 @@
 # /etc/systemd/system/tv-shadow@.service
 # Unidade systemd por usuário de TV (ex: tv-shadow@tv01.service, tv-shadow@tv02.service, tv-shadow@tv03.service)
-# Executa sem privilégios de root (User=%i), inicia somente se a sessão XFCE do usuário estiver ativa,
+# Executa sem privilégios de root (User=%i), aguarda a sessão XFCE do usuário ficar ativa,
 # para automaticamente quando a sessão XFCE encerra e restringe o socket de rede a 127.0.0.1.
 
 [Unit]
 Description=FreeRDP Shadow X11 Server para sessao XFCE da TV (%i)
 After=network.target systemd-user-sessions.service
+StartLimitIntervalSec=0
 # Nunca interfere nem depende de reinício do xrdp.service (porta 3389 preservada)
 
 [Service]
@@ -13,10 +14,11 @@ Type=simple
 User=%i
 Group=%i
 WorkingDirectory=/home/%i
+Environment="HOME=/home/%i"
 Environment="TV_PANEL_DB_PATH=/var/lib/tv-panel/tv_panel.db"
 ExecStart=/usr/local/libexec/tv-panel/tv-shadow-launch.sh %i
-Restart=on-failure
-RestartSec=5s
+Restart=always
+RestartSec=3s
 
 # Isolamento de rede no nível do cgroup/kernel: permite exclusivamente loopback 127.0.0.1
 IPAccounting=yes
@@ -31,4 +33,3 @@ ReadOnlyPaths=/var/lib/tv-panel
 
 [Install]
 WantedBy=multi-user.target
-

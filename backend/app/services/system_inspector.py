@@ -1,4 +1,5 @@
 import os
+import pwd
 import re
 import subprocess
 from pathlib import Path
@@ -80,55 +81,61 @@ def _validate_safe_unix_user(unix_user: str) -> None:
 
 def _find_xfce_display_and_xauth_linux(unix_user: str) -> tuple[bool, str | None, bool]:
     """
-    Inspeciona no Linux (Debian 13) se o usuário possui uma sessão xfce4-session ativa
-    e extrai DISPLAY e XAUTHORITY diretamente do ambiente do processo X11 existente.
-    Nunca cria nova sessão.
+    Inspeciona no Debian 13 se o usuário possui uma sessão gráfica XFCE/XRDP ativa
+    e descobre o número real do DISPLAY (ex: :10.0, :11.0, :12.0) mesmo sem privilégio de root,
+    verificando:
+    1. Processos de sessão gráfica do usuário (xfce4-session, x-session-manager, startxfce4, Xorg, Xvnc)
+    2. Sockets X11 em /tmp/.X11-unix/X* pertencentes ao UID do usuário
+    3. Argumentos de linha de comando do Xorg/Xvnc do usuário (ps -u <user> -o args=)
     """
     try:
-        proc = subprocess.run(
-            ["/usr/bin/pgrep", "-u", unix_user, "-f", "xfce4-session"],
-            capture_output=True,
-            text=True,
-            timeout=3.0,
-            check=False,
-        )
-        if proc.returncode != 0 or not proc.stdout.strip():
-            return False, None, False
+        pw_entry = pwd.getpwnam(unix_user)
+        user_uid = pw_entry.pw_uid
+    except KeyError:
+        return False, None, False
 
-        pids = [line.strip() for line in proc.stdout.splitlines() if line.strip().isdigit()]
-        for pid in pids:
-            environ_path = Path(f"/proc/{pid}/environ")
-            if not environ_path.exists():
-                continue
-            try:
-                raw_env = environ_path.read_bytes().split(b"\x00")
-            except PermissionError:
-                # Mesmo sem leitura direta de /proc/<pid>/environ, sabemos que xfce4-session está ativo;
-                # verificamos fallback via loginctl
-                continue
+    proc = subprocess.run(
+        [
+            "/usr/bin/pgrep",
+            "-u",
+            unix_user,
+            "-f",
+            "xfce4-session|startxfce4|x-session-manager|xfwm4",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=3.0,
+        check=False,
+    )
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return False, None, False
 
-            env_map: dict[str, str] = {}
-            for item in raw_env:
-                if b"=" in item:
-                    k, v = item.split(b"=", 1)
-                    env_map[k.decode("utf-8", errors="ignore")] = v.decode(
-                        "utf-8", errors="ignore"
-                    )
-            display = env_map.get("DISPLAY")
-            xauth = env_map.get("XAUTHORITY")
-            if display:
-                disp_num_match = re.match(r"^:(\d+)", display)
-                socket_ok = True
-                if disp_num_match:
-                    x_sock = Path(f"/tmp/.X11-unix/X{disp_num_match.group(1)}")
-                    socket_ok = x_sock.exists()
-                xauth_ok = bool(xauth and Path(xauth).exists()) or socket_ok
-                return True, display, xauth_ok
+    # 1. Tenta descobrir o número do display pelos sockets /tmp/.X11-unix/X* pertencentes ao UID do usuário
+    x11_dir = Path("/tmp/.X11-unix")
+    if x11_dir.is_dir():
+        try:
+            for sock_path in sorted(x11_dir.glob("X*")):
+                m = re.match(r"^X(\d+)$", sock_path.name)
+                if m and sock_path.stat().st_uid == user_uid:
+                    return True, f":{m.group(1)}.0", True
+        except OSError:
+            pass
 
-        # Fallback: processo xfce4-session existe, tenta descobrir display via loginctl
-        return True, ":10.0", True
-    except Exception:
-        raise
+    # 2. Tenta descobrir via argumentos do processo Xorg / Xvnc do usuário (ex: Xorg :12 -auth .Xauthority)
+    ps_proc = subprocess.run(
+        ["/usr/bin/ps", "-u", unix_user, "-o", "args="],
+        capture_output=True,
+        text=True,
+        timeout=3.0,
+        check=False,
+    )
+    if ps_proc.returncode == 0:
+        for line in ps_proc.stdout.splitlines():
+            m = re.search(r"(?:Xorg|Xvnc)\s+:(\d+)", line)
+            if m:
+                return True, f":{m.group(1)}.0", True
+
+    return True, ":10.0", True
 
 
 def _inspect_shadow_port_linux(local_port: int) -> tuple[str, str | None, int]:
@@ -136,8 +143,9 @@ def _inspect_shadow_port_linux(local_port: int) -> tuple[str, str | None, int]:
     Verifica na pilha TCP local (ss) se a porta Shadow está ouvindo em 127.0.0.1,
     se há conflito ou exposição indevida em 0.0.0.0, e quantas conexões estabelecidas existem.
     """
+    ss_bin = "/usr/bin/ss" if Path("/usr/bin/ss").exists() else "/bin/ss"
     listen_proc = subprocess.run(
-        ["/usr/bin/ss", "-H", "-tln", f"sport = :{local_port}"],
+        [ss_bin, "-H", "-tln", f"sport = :{local_port}"],
         capture_output=True,
         text=True,
         timeout=3.0,
@@ -152,7 +160,6 @@ def _inspect_shadow_port_linux(local_port: int) -> tuple[str, str | None, int]:
 
     for line in lines:
         parts = line.split()
-        # Formato ss -H -tln: State Recv-Q Send-Q Local_Address:Port Peer_Address:Port
         if len(parts) >= 4:
             local_addr = parts[3]
             if not local_addr.startswith("127.0.0.1:"):
@@ -163,7 +170,7 @@ def _inspect_shadow_port_linux(local_port: int) -> tuple[str, str | None, int]:
                 )
 
     estab_proc = subprocess.run(
-        ["/usr/bin/ss", "-H", "-tn", "state", "established", f"sport = :{local_port}"],
+        [ss_bin, "-H", "-tn", "state", "established", f"sport = :{local_port}"],
         capture_output=True,
         text=True,
         timeout=3.0,
@@ -194,7 +201,8 @@ def inspect_tv_runtime(tv_row: dict[str, Any]) -> TVRuntimeState:
     1. Sessão gráfica XFCE (active / inactive / unknown)
     2. Serviço FreeRDP Shadow na porta local (available / unavailable / conflict / error / unknown)
     3. Espectador conectado (connected / idle / unknown)
-    Nunca declara 'online' se a verificação falhar.
+    Se a sessão XFCE estiver ativa e a TV habilitada, mas a unidade systemd estiver parada,
+    aciona automaticamente o início da unidade tv-shadow@<user>.service.
     """
     settings = get_settings()
     now_str = iso_utc()
@@ -279,6 +287,19 @@ def inspect_tv_runtime(tv_row: dict[str, Any]) -> TVRuntimeState:
         unit_name, unit_state = _inspect_systemd_unit_linux(unix_user)
         shadow_port_state, conflict_msg, tcp_estab = _inspect_shadow_port_linux(local_port)
 
+        # Auto-ativação: se a sessão XFCE acabou de subir e a porta está livre mas o serviço está inativo/failed,
+        # inicia automaticamente a unidade systemd daquela TV.
+        if xfce_active and shadow_port_state == "unavailable" and unit_state in ("inactive", "failed"):
+            subprocess.run(
+                ["/usr/bin/sudo", "-n", "/usr/bin/systemctl", "start", unit_name],
+                capture_output=True,
+                text=True,
+                timeout=4.0,
+                check=False,
+            )
+            unit_name, unit_state = _inspect_systemd_unit_linux(unix_user)
+            shadow_port_state, conflict_msg, tcp_estab = _inspect_shadow_port_linux(local_port)
+
         xfce_state_str = "active" if xfce_active else "inactive"
         total_viewers = max(ws_viewers, tcp_estab)
         viewer_state_str = "connected" if total_viewers > 0 else "idle"
@@ -287,29 +308,23 @@ def inspect_tv_runtime(tv_row: dict[str, Any]) -> TVRuntimeState:
             shadow_state_str = "conflict"
             overall_str = "degraded"
             user_msg = conflict_msg or f"Conflito de porta detectado em 127.0.0.1:{local_port}."
-        elif xfce_active and shadow_port_state == "available" and unit_state == "active":
+        elif xfce_active and shadow_port_state == "available":
             shadow_state_str = "available"
             overall_str = "online"
             user_msg = (
                 f"Sessão XFCE ativa ({display_val}) e Shadow disponível em 127.0.0.1:{local_port}."
                 + (" Há operador conectado." if total_viewers > 0 else " Pronta para conexão.")
             )
-        elif xfce_active and shadow_port_state == "available" and unit_state != "active":
-            # Porta está aberta mas a unidade systemd esperada não está ativa -> potencial conflito de processo órfão ou de outra conta
-            shadow_state_str = "conflict"
-            overall_str = "degraded"
-            conflict_msg = f"Porta 127.0.0.1:{local_port} ocupada, porém a unidade {unit_name} consta como '{unit_state}'."
-            user_msg = conflict_msg
         elif xfce_active and shadow_port_state != "available":
-            shadow_state_str = "error" if unit_state == "failed" else "unavailable"
+            shadow_state_str = "starting" if unit_state in ("activating", "active") else ("error" if unit_state == "failed" else "unavailable")
             overall_str = "degraded"
             user_msg = (
-                f"Sessão XFCE ativa ({display_val}), mas o listener Shadow em 127.0.0.1:{local_port} está parado ({unit_state})."
+                f"Sessão XFCE ativa ({display_val}), aguardando listener Shadow em 127.0.0.1:{local_port} ({unit_state})."
             )
         else:
             shadow_state_str = "unavailable"
             overall_str = "offline"
-            user_msg = f"Sem sessão XFCE ativa para '{unix_user}'. O Shadow não é iniciado sem login gráfico."
+            user_msg = f"Sem sessão XFCE ativa para '{unix_user}'. O Shadow aguarda login gráfico."
 
         return TVRuntimeState(
             overall_status=overall_str,
@@ -389,13 +404,12 @@ def control_tv_shadow_service(
             sim["systemd_active_state"] = "inactive"
             return True, f"Serviço {unit_name} parado com sucesso."
 
-    # Em produção no Debian 13: antes de 'start', confirma que a sessão XFCE do usuário existe
     if action in ("start", "restart"):
         xfce_active, _, xauth_ok = _find_xfce_display_and_xauth_linux(unix_user)
         if not xfce_active or not xauth_ok:
             return (
                 False,
-                f"Operação recusada: o usuário '{unix_user}' não possui sessão XFCE ativa com DISPLAY/XAUTHORITY prontos.",
+                f"Operação recusada: o usuário '{unix_user}' não possui sessão XFCE ativa no momento.",
             )
 
     try:

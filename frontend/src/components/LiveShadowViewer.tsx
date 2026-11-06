@@ -25,6 +25,8 @@ export const LiveShadowViewer: React.FC<LiveShadowViewerProps> = ({
   const displayHostRef = useRef<HTMLDivElement | null>(null);
   const clientRef = useRef<Client | null>(null);
   const keyboardRef = useRef<Keyboard | null>(null);
+  const onStateUpdatedRef = useRef(onStateUpdated);
+  onStateUpdatedRef.current = onStateUpdated;
 
   const [phase, setPhase] = useState<TunnelPhase>("connecting");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -33,14 +35,15 @@ export const LiveShadowViewer: React.FC<LiveShadowViewerProps> = ({
   const [connectionAttempt, setConnectionAttempt] = useState<number>(1);
   const scaleRef = useRef<number>(1);
 
-  const updateScale = useCallback(() => {
+  const updateScale = useCallback((explicitW?: number, explicitH?: number) => {
     const client = clientRef.current;
     const viewport = viewportRef.current;
     if (!client || !viewport) return;
     const display = client.getDisplay();
-    const w = display.getWidth();
-    const h = display.getHeight();
+    const w = explicitW ?? display.getWidth();
+    const h = explicitH ?? display.getHeight();
     if (w <= 0 || h <= 0) return;
+    if (viewport.clientWidth <= 0 || viewport.clientHeight <= 0) return;
 
     const scaleX = viewport.clientWidth / w;
     const scaleY = viewport.clientHeight / h;
@@ -88,8 +91,9 @@ export const LiveShadowViewer: React.FC<LiveShadowViewerProps> = ({
       displayHostRef.current.appendChild(displayEl);
     }
 
-    display.onresize = () => {
-      updateScale();
+    display.onresize = (w: number, h: number) => {
+      setPhase("connected");
+      updateScale(w, h);
     };
 
     client.onstatechange = (state: number) => {
@@ -97,10 +101,10 @@ export const LiveShadowViewer: React.FC<LiveShadowViewerProps> = ({
       if (state === 3) {
         setPhase("connected");
         updateScale();
-        onStateUpdated();
+        onStateUpdatedRef.current();
       } else if (state === 5) {
         setPhase((prev) => (prev === "error" ? "error" : "disconnected"));
-        onStateUpdated();
+        onStateUpdatedRef.current();
       }
     };
 
@@ -188,7 +192,7 @@ export const LiveShadowViewer: React.FC<LiveShadowViewerProps> = ({
       await document.exitFullscreen();
       setIsFullscreen(false);
     }
-    setTimeout(updateScale, 150);
+    setTimeout(() => updateScale(), 150);
   };
 
   const handleReconnect = () => {
@@ -198,7 +202,7 @@ export const LiveShadowViewer: React.FC<LiveShadowViewerProps> = ({
 
   const handleDisconnectAndClose = () => {
     cleanupClient();
-    onStateUpdated();
+    onStateUpdatedRef.current();
     onClose();
   };
 
@@ -304,4 +308,3 @@ export const LiveShadowViewer: React.FC<LiveShadowViewerProps> = ({
     </div>
   );
 };
-

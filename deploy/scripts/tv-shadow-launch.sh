@@ -23,14 +23,17 @@ if [[ "$(id -un)" != "${TARGET_USER}" ]]; then
     exit 1
 fi
 
-# 1. Consulta parâmetros validados no banco SQLite (modo somente leitura)
+USER_UID="$(id -u "${TARGET_USER}")"
+
+# 1. Consulta parâmetros validados no banco SQLite usando URI immutable=1
+# (evita erro de permissão de escrita em arquivos -wal/-shm no diretório /var/lib/tv-panel)
 if [[ ! -f "${DB_PATH}" ]]; then
     echo "[ERRO] Banco de inventário não encontrado em ${DB_PATH}." >&2
     exit 1
 fi
 
-CONFIG_LINE="$(sqlite3 -readonly "${DB_PATH}" \
-    "SELECT local_port, sec_mode, gfx_enabled, server_side_cursor, shadow_auth_enabled, enabled FROM tvs WHERE unix_user = '${TARGET_USER}' LIMIT 1;" || true)"
+CONFIG_LINE="$(sqlite3 "file:${DB_PATH}?immutable=1" \
+    "SELECT local_port, sec_mode, gfx_enabled, server_side_cursor, shadow_auth_enabled, enabled FROM tvs WHERE unix_user = '${TARGET_USER}' LIMIT 1;" 2>/dev/null || true)"
 
 if [[ -z "${CONFIG_LINE}" ]]; then
     echo "[ERRO] Usuário '${TARGET_USER}' não consta no inventário autorizado de TVs." >&2
@@ -40,7 +43,8 @@ fi
 IFS='|' read -r LOCAL_PORT SEC_MODE GFX_ENABLED CURSOR_ENABLED AUTH_ENABLED TV_ENABLED <<< "${CONFIG_LINE}"
 
 if [[ "${TV_ENABLED}" != "1" ]]; then
-    echo "[INFO] TV associada ao usuário '${TARGET_USER}' está desabilitada no painel. Encerrando."
+    echo "[INFO] TV associada ao usuário '${TARGET_USER}' está desabilitada no painel. Aguardando..."
+    sleep 5
     exit 0
 fi
 
@@ -49,45 +53,71 @@ if [[ ! "${LOCAL_PORT}" =~ ^[0-9]+$ ]] || (( LOCAL_PORT < 3391 || LOCAL_PORT > 3
     exit 1
 fi
 
-# 2. Verifica conflitos de porta antes de iniciar
+# 2. Aguarda até que a sessão gráfica XFCE do usuário esteja ativa (sem falhar no systemd)
+XFCE_PID=""
+while [[ -z "${XFCE_PID}" ]]; do
+    XFCE_PID="$(pgrep -u "${TARGET_USER}" -f "xfce4-session|startxfce4|x-session-manager|xfwm4" | head -n 1 || true)"
+    if [[ -z "${XFCE_PID}" ]]; then
+        sleep 3
+    fi
+done
+
+# 3. Verifica conflitos de porta antes de iniciar
 if ss -H -tln "sport = :${LOCAL_PORT}" | grep -q .; then
     echo "[ERRO] Conflito detectado: a porta 127.0.0.1:${LOCAL_PORT} já está em uso por outro processo." >&2
+    sleep 3
     exit 1
 fi
 
-# 3. Localiza a sessão gráfica XFCE existente do usuário e importa DISPLAY e XAUTHORITY
-XFCE_PID="$(pgrep -u "${TARGET_USER}" -f "xfce4-session" | head -n 1 || true)"
-if [[ -z "${XFCE_PID}" ]]; then
-    echo "[ERRO] Nenhuma sessão gráfica xfce4-session ativa encontrada para '${TARGET_USER}'. O Shadow não inicia antes do login gráfico." >&2
-    exit 1
-fi
+# 4. Descobre DISPLAY e XAUTHORITY da sessão gráfica existente do usuário
+DETECTED_DISPLAY=""
+DETECTED_XAUTH=""
 
-if [[ ! -r "/proc/${XFCE_PID}/environ" ]]; then
-    echo "[ERRO] Não foi possível ler o ambiente do processo xfce4-session (PID ${XFCE_PID})." >&2
-    exit 1
-fi
+# Varre os processos do próprio usuário em busca de DISPLAY e XAUTHORITY
+for pid in $(pgrep -u "${TARGET_USER}" || true); do
+    if [[ -r "/proc/${pid}/environ" ]]; then
+        if [[ -z "${DETECTED_DISPLAY}" ]]; then
+            DETECTED_DISPLAY="$(tr '\0' '\n' < "/proc/${pid}/environ" 2>/dev/null | sed -n 's/^DISPLAY=//p' | head -n 1 || true)"
+        fi
+        if [[ -z "${DETECTED_XAUTH}" ]]; then
+            DETECTED_XAUTH="$(tr '\0' '\n' < "/proc/${pid}/environ" 2>/dev/null | sed -n 's/^XAUTHORITY=//p' | head -n 1 || true)"
+        fi
+        if [[ -n "${DETECTED_DISPLAY}" && -n "${DETECTED_XAUTH}" ]]; then
+            break
+        fi
+    fi
+done
 
-DETECTED_DISPLAY="$(tr '\0' '\n' < "/proc/${XFCE_PID}/environ" | sed -n 's/^DISPLAY=//p' | head -n 1)"
-DETECTED_XAUTH="$(tr '\0' '\n' < "/proc/${XFCE_PID}/environ" | sed -n 's/^XAUTHORITY=//p' | head -n 1)"
+# Fallback: verifica qual socket /tmp/.X11-unix/X* pertence ao UID deste usuário
+if [[ -z "${DETECTED_DISPLAY}" ]] && [[ -d /tmp/.X11-unix ]]; then
+    for sock in /tmp/.X11-unix/X*; do
+        [[ -e "${sock}" ]] || continue
+        if [[ "$(stat -c '%u' "${sock}" 2>/dev/null || echo '')" == "${USER_UID}" ]]; then
+            disp_num="${sock##*/tmp/.X11-unix/X}"
+            DETECTED_DISPLAY=":${disp_num}.0"
+            break
+        fi
+    done
+fi
 
 if [[ -z "${DETECTED_DISPLAY}" ]]; then
-    echo "[ERRO] Variável DISPLAY não encontrada na sessão XFCE (PID ${XFCE_PID})." >&2
-    exit 1
+    echo "[AVISO] Sessão XFCE encontrada (PID ${XFCE_PID}), mas DISPLAY ainda não disponível. Tentando novamente em 2s..." >&2
+    sleep 2
+    exit 0
 fi
 
-if [[ -z "${DETECTED_XAUTH}" ]]; then
-    DETECTED_XAUTH="${HOME}/.Xauthority"
-fi
-
-if [[ ! -r "${DETECTED_XAUTH}" ]]; then
-    echo "[ERRO] Arquivo XAUTHORITY '${DETECTED_XAUTH}' não está acessível para '${TARGET_USER}'." >&2
-    exit 1
+if [[ -z "${DETECTED_XAUTH}" || ! -r "${DETECTED_XAUTH}" ]]; then
+    if [[ -r "${HOME}/.Xauthority" ]]; then
+        DETECTED_XAUTH="${HOME}/.Xauthority"
+    fi
 fi
 
 export DISPLAY="${DETECTED_DISPLAY}"
-export XAUTHORITY="${DETECTED_XAUTH}"
+if [[ -n "${DETECTED_XAUTH}" && -r "${DETECTED_XAUTH}" ]]; then
+    export XAUTHORITY="${DETECTED_XAUTH}"
+fi
 
-# 4. Monta argumentos fixos do freerdp-shadow-cli3
+# 5. Monta argumentos fixos do freerdp-shadow-cli3
 SHADOW_BIN="/usr/bin/freerdp-shadow-cli3"
 if [[ ! -x "${SHADOW_BIN}" ]]; then
     echo "[ERRO] Binário ${SHADOW_BIN} não encontrado. Instale o pacote freerdp3-shadow-x11." >&2
@@ -122,9 +152,9 @@ else
     ARGS+=("-server-side-cursor")
 fi
 
-echo "[INFO] Anexando FreeRDP Shadow ao DISPLAY=${DISPLAY} (PID XFCE=${XFCE_PID}) em 127.0.0.1:${LOCAL_PORT}"
+echo "[INFO] Anexando FreeRDP Shadow ao DISPLAY=${DISPLAY} (XAUTHORITY=${XAUTHORITY:-padrao}, PID XFCE=${XFCE_PID}) em 127.0.0.1:${LOCAL_PORT}"
 
-# 5. Inicia o FreeRDP Shadow em background e monitora o PID da sessão XFCE:
+# 6. Inicia o FreeRDP Shadow em background e monitora o PID da sessão XFCE:
 # se a sessão gráfica XFCE encerrar, o Shadow para imediatamente.
 "${SHADOW_BIN}" "${ARGS[@]}" &
 SHADOW_PID=$!
@@ -146,5 +176,4 @@ while kill -0 "${SHADOW_PID}" 2>/dev/null; do
     sleep 2
 done
 
-wait "${SHADOW_PID}"
-
+wait "${SHADOW_PID}" || true

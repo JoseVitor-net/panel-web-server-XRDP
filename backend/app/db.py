@@ -1,3 +1,4 @@
+import os
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -13,8 +14,15 @@ def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
     conn = sqlite3.connect(str(target_path), timeout=10.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON;")
-    conn.execute("PRAGMA journal_mode = WAL;")
+    # Usa journal_mode = DELETE para que processos sem privilégio (como tv-shadow-launch.sh)
+    # possam ler o arquivo SQLite em modo somente-leitura sem exigir criação de arquivos -wal/-shm.
+    conn.execute("PRAGMA journal_mode = DELETE;")
     conn.execute("PRAGMA synchronous = NORMAL;")
+    try:
+        if target_path.exists():
+            os.chmod(target_path, 0o644)
+    except OSError:
+        pass
     return conn
 
 

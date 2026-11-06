@@ -11,3 +11,4 @@
 *.yml text eol=lf
 *.example text eol=lf
 deploy/sudoers/* text eol=lf
+

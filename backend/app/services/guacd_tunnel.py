@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
@@ -51,7 +52,7 @@ def build_rdp_connection_params(tv_row: dict[str, Any], width: int, height: int)
     """
     port = str(int(tv_row["local_port"]))
     sec_mode = str(tv_row.get("sec_mode", "rdp"))
-    # IMPORTANTE: anexar-se ao FreeRDP Shadow em 127.0.0.1 sem criar nova sessão XRDP
+    # IMPORTANTE: anexar-se ao FreeRDP Shadow em 127.0.0.1 sem forçar resize-method=reconnect
     return {
         "hostname": "127.0.0.1",
         "port": port,
@@ -62,10 +63,6 @@ def build_rdp_connection_params(tv_row: dict[str, Any], width: int, height: int)
         "height": str(max(360, min(height, 2160))),
         "dpi": "96",
         "color-depth": "24",
-        "resize-method": "reconnect",
-        "enable-wallpaper": "true",
-        "enable-theming": "true",
-        "enable-font-smoothing": "true",
     }
 
 
@@ -77,7 +74,8 @@ async def run_guacd_websocket_tunnel(
 ) -> None:
     """
     Estabelece o handshake do protocolo Guacamole com o daemon local guacd (127.0.0.1:4822)
-    e faz o repasse bidirecional de instruções para o cliente guacamole-common-js no navegador.
+    e faz o repasse bidirecional de instruções para o cliente guacamole-common-js no navegador,
+    tratando também o opcode interno "" (UUID do túnel e heartbeats "ping") exigido pelo WebSocketTunnel.
     """
     settings = get_settings()
 
@@ -90,7 +88,7 @@ async def run_guacd_websocket_tunnel(
         await websocket.send_text(
             encode_guac_instruction(
                 "error",
-                "Não foi possível conectar ao gateway local guacd (127.0.0.1:4822). Verifique se o serviço guacd está ativo.",
+                "Não foi possível conectar ao gateway local guacd (127.0.0.1:4822). Verifique se o container/serviço guacd está ativo.",
                 "514",
             )
         )
@@ -126,7 +124,6 @@ async def run_guacd_websocket_tunnel(
             + encode_guac_instruction("image", "image/png", "image/jpeg", "image/webp")
         )
 
-        # Em guacd 1.5+/1.6+, o primeiro argumento de args costuma ser VERSION_1_3_0 / VERSION_1_5_0
         connect_values: list[str] = []
         for arg_name in expected_arg_names:
             if arg_name.startswith("VERSION_"):
@@ -138,23 +135,48 @@ async def run_guacd_websocket_tunnel(
         writer.write(handshake_payload.encode("utf-8"))
         await writer.drain()
 
-        # Se sobrou algum dado no buffer após o 'args', envia ao cliente WebSocket
+        # 4. Envia o UUID interno do túnel (opcode vazio "") esperado pelo Guacamole.WebSocketTunnel
+        tunnel_uuid = str(uuid.uuid4())
+        await websocket.send_text(encode_guac_instruction("", tunnel_uuid))
+
         if buf:
             await websocket.send_text(buf)
 
         async def browser_to_guacd() -> None:
+            client_buf = ""
             try:
                 while True:
                     msg = await websocket.receive_text()
-                    if msg:
-                        writer.write(msg.encode("utf-8"))
+                    if not msg:
+                        continue
+                    client_buf += msg
+                    forward_chunks: list[str] = []
+                    while True:
+                        try:
+                            parsed, client_buf = parse_guac_instruction(client_buf)
+                        except ValueError:
+                            client_buf = ""
+                            break
+                        if parsed is None:
+                            break
+                        # Intercepta instruções internas do WebSocketTunnel (opcode == "")
+                        if len(parsed) >= 1 and parsed[0] == "":
+                            if len(parsed) >= 3 and parsed[1] == "ping":
+                                await websocket.send_text(
+                                    encode_guac_instruction("", "ping", parsed[2])
+                                )
+                            continue
+                        forward_chunks.append(encode_guac_instruction(*parsed))
+
+                    if forward_chunks:
+                        writer.write("".join(forward_chunks).encode("utf-8"))
                         await writer.drain()
             except WebSocketDisconnect:
                 pass
 
         async def guacd_to_browser() -> None:
             while True:
-                data = await reader.read(16384)
+                data = await reader.read(32768)
                 if not data:
                     break
                 await websocket.send_text(data.decode("utf-8", errors="replace"))
@@ -185,4 +207,3 @@ async def run_guacd_websocket_tunnel(
             await writer.wait_closed()
         except Exception:
             pass
-
