@@ -1,10 +1,14 @@
 import asyncio
+import codecs
+import logging
 import uuid
 from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
 from app.config import get_settings
+
+logger = logging.getLogger("tv_panel.guacd")
 
 
 def encode_guac_instruction(*elements: str) -> str:
@@ -52,17 +56,23 @@ def build_rdp_connection_params(tv_row: dict[str, Any], width: int, height: int)
     """
     port = str(int(tv_row["local_port"]))
     sec_mode = str(tv_row.get("sec_mode", "rdp"))
-    # IMPORTANTE: anexar-se ao FreeRDP Shadow em 127.0.0.1 sem forçar resize-method=reconnect
+    # IMPORTANTE: anexar-se ao FreeRDP Shadow em 127.0.0.1 com color-depth=32 (nativo do X11 Shadow)
+    # e desativando canais de áudio e caches legados que causam desconexão no freerdp-shadow-cli3
     return {
         "hostname": "127.0.0.1",
         "port": port,
-        "security": sec_mode,
+        "security": sec_mode if sec_mode in ("rdp", "tls", "nla", "any") else "any",
         "ignore-cert": "true",
         "disable-auth": "false" if tv_row.get("shadow_auth_enabled") else "true",
         "width": str(max(640, min(width, 3840))),
         "height": str(max(360, min(height, 2160))),
         "dpi": "96",
-        "color-depth": "24",
+        "color-depth": "32",
+        "disable-audio": "true",
+        "enable-audio-input": "false",
+        "disable-bitmap-caching": "true",
+        "disable-offscreen-caching": "true",
+        "disable-glyph-caching": "true",
     }
 
 
@@ -139,9 +149,6 @@ async def run_guacd_websocket_tunnel(
         tunnel_uuid = str(uuid.uuid4())
         await websocket.send_text(encode_guac_instruction("", tunnel_uuid))
 
-        if buf:
-            await websocket.send_text(buf)
-
         async def browser_to_guacd() -> None:
             client_buf = ""
             try:
@@ -174,23 +181,46 @@ async def run_guacd_websocket_tunnel(
             except WebSocketDisconnect:
                 pass
 
-        async def guacd_to_browser() -> None:
+        async def guacd_to_browser(initial_buf: str) -> None:
+            server_buf = initial_buf
+            decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
             while True:
+                if server_buf:
+                    out_instructions: list[str] = []
+                    while True:
+                        parsed, server_buf = parse_guac_instruction(server_buf)
+                        if parsed is None:
+                            break
+                        if parsed[0] == "error":
+                            logger.warning("guacd reportou erro para TV %s: %s", tv_row.get("slug"), parsed)
+                        out_instructions.append(encode_guac_instruction(*parsed))
+                    if out_instructions:
+                        await websocket.send_text("".join(out_instructions))
+
                 data = await reader.read(32768)
                 if not data:
+                    server_buf += decoder.decode(b"", final=True)
+                    if server_buf:
+                        await websocket.send_text(server_buf)
                     break
-                await websocket.send_text(data.decode("utf-8", errors="replace"))
+                server_buf += decoder.decode(data, final=False)
 
         done, pending = await asyncio.wait(
             [
                 asyncio.create_task(browser_to_guacd()),
-                asyncio.create_task(guacd_to_browser()),
+                asyncio.create_task(guacd_to_browser(buf)),
             ],
             return_when=asyncio.FIRST_COMPLETED,
         )
         for task in pending:
             task.cancel()
-    except Exception:
+        try:
+            await websocket.send_text(encode_guac_instruction("disconnect"))
+            await websocket.close()
+        except Exception:
+            pass
+    except Exception as exc:
+        logger.exception("Erro no túnel WebSocket Guacamole da TV %s: %s", tv_row.get("slug"), exc)
         try:
             await websocket.send_text(
                 encode_guac_instruction(
@@ -199,6 +229,7 @@ async def run_guacd_websocket_tunnel(
                     "519",
                 )
             )
+            await websocket.close(code=1011)
         except Exception:
             pass
     finally:

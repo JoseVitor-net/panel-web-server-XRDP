@@ -116,6 +116,14 @@ export const LiveShadowViewer: React.FC<LiveShadowViewerProps> = ({
       );
     };
 
+    tunnel.onstatechange = (state: number) => {
+      // Estados Guacamole.Tunnel: 0=CONNECTING, 1=OPEN, 2=CLOSED
+      if (state === 2) {
+        setPhase((prev) => (prev === "error" ? "error" : "disconnected"));
+        onStateUpdatedRef.current();
+      }
+    };
+
     tunnel.onerror = (statusObj: { code: number; message?: string }) => {
       setPhase("error");
       setErrorMessage(
