@@ -1,0 +1,11 @@
+fastapi==0.115.11
+uvicorn[standard]==0.34.0
+pydantic==2.10.6
+pydantic-settings==2.8.1
+cryptography==44.0.2
+pwdlib[argon2]==0.2.1
+python-multipart==0.0.20
+websockets==15.0.1
+pytest==8.3.5
+pytest-asyncio==0.25.3
+httpx==0.28.1

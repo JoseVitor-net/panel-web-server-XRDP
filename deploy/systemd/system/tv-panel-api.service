@@ -1,0 +1,28 @@
+# /etc/systemd/system/tv-panel-api.service
+# Serviço do backend FastAPI (executado como usuário de sistema sem privilégios 'tv-panel')
+
+[Unit]
+Description=Painel Web de Administracao e Acesso Shadow RDP (API FastAPI)
+After=network.target guacd.service
+Wants=guacd.service
+
+[Service]
+Type=simple
+User=tv-panel
+Group=tv-panel
+WorkingDirectory=/opt/tv-panel/backend
+EnvironmentFile=/etc/tv-panel/tv-panel.env
+ExecStart=/opt/tv-panel/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips="127.0.0.1"
+Restart=always
+RestartSec=3s
+
+# Endurecimento de segurança
+NoNewPrivileges=no
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/tv-panel
+
+[Install]
+WantedBy=multi-user.target
+

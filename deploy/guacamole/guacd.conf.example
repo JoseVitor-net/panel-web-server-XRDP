@@ -1,0 +1,11 @@
+# /etc/guacamole/guacd.conf
+# Configuração do daemon Apache Guacamole (guacd) restrito exclusivamente ao loopback local.
+
+[daemon]
+pid_file = /run/guacd/guacd.pid
+log_level = info
+
+[server]
+bind_host = 127.0.0.1
+bind_port = 4822
+

@@ -1,0 +1,11 @@
+# /etc/sudoers.d/tv-panel-admin
+# Permissão estritamente limitada para o usuário de serviço 'tv-panel' controlar apenas
+# as unidades tv-shadow@<usuario>.service. Nenhuma permissão sobre xrdp.service ou shell.
+
+Defaults:tv-panel !requiretty
+Cmnd_Alias TV_SHADOW_START = /usr/bin/systemctl start tv-shadow@tv[0-9][0-9].service
+Cmnd_Alias TV_SHADOW_STOP = /usr/bin/systemctl stop tv-shadow@tv[0-9][0-9].service
+Cmnd_Alias TV_SHADOW_RESTART = /usr/bin/systemctl restart tv-shadow@tv[0-9][0-9].service
+
+tv-panel ALL=(root) NOPASSWD: TV_SHADOW_START, TV_SHADOW_STOP, TV_SHADOW_RESTART
+

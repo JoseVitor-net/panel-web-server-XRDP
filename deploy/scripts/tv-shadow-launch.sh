@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+# /usr/local/libexec/tv-panel/tv-shadow-launch.sh
+# Wrapper seguro para iniciar o FreeRDP Shadow anexado exclusivamente a uma sessão XFCE já ativa.
+# Nunca inicia antes do login gráfico, nunca cria sessão XRDP nova e nunca altera a porta 3389.
+
+set -euo pipefail
+
+TARGET_USER="${1:-}"
+DB_PATH="${TV_PANEL_DB_PATH:-/var/lib/tv-panel/tv_panel.db}"
+
+if [[ -z "${TARGET_USER}" ]]; then
+    echo "[ERRO] Usuário Unix não informado." >&2
+    exit 1
+fi
+
+if [[ ! "${TARGET_USER}" =~ ^[a-z_][a-z0-9_-]{1,30}$ ]] || [[ "${TARGET_USER}" == "root" ]]; then
+    echo "[ERRO] Usuário Unix inválido ou proibido: ${TARGET_USER}" >&2
+    exit 1
+fi
+
+if [[ "$(id -un)" != "${TARGET_USER}" ]]; then
+    echo "[ERRO] Este script deve ser executado sob a conta Unix '${TARGET_USER}' (atual: $(id -un))." >&2
+    exit 1
+fi
+
+# 1. Consulta parâmetros validados no banco SQLite (modo somente leitura)
+if [[ ! -f "${DB_PATH}" ]]; then
+    echo "[ERRO] Banco de inventário não encontrado em ${DB_PATH}." >&2
+    exit 1
+fi
+
+CONFIG_LINE="$(sqlite3 -readonly "${DB_PATH}" \
+    "SELECT local_port, sec_mode, gfx_enabled, server_side_cursor, shadow_auth_enabled, enabled FROM tvs WHERE unix_user = '${TARGET_USER}' LIMIT 1;" || true)"
+
+if [[ -z "${CONFIG_LINE}" ]]; then
+    echo "[ERRO] Usuário '${TARGET_USER}' não consta no inventário autorizado de TVs." >&2
+    exit 1
+fi
+
+IFS='|' read -r LOCAL_PORT SEC_MODE GFX_ENABLED CURSOR_ENABLED AUTH_ENABLED TV_ENABLED <<< "${CONFIG_LINE}"
+
+if [[ "${TV_ENABLED}" != "1" ]]; then
+    echo "[INFO] TV associada ao usuário '${TARGET_USER}' está desabilitada no painel. Encerrando."
+    exit 0
+fi
+
+if [[ ! "${LOCAL_PORT}" =~ ^[0-9]+$ ]] || (( LOCAL_PORT < 3391 || LOCAL_PORT > 3499 || LOCAL_PORT == 3389 )); then
+    echo "[ERRO] Porta local inválida ou reservada: ${LOCAL_PORT}" >&2
+    exit 1
+fi
+
+# 2. Verifica conflitos de porta antes de iniciar
+if ss -H -tln "sport = :${LOCAL_PORT}" | grep -q .; then
+    echo "[ERRO] Conflito detectado: a porta 127.0.0.1:${LOCAL_PORT} já está em uso por outro processo." >&2
+    exit 1
+fi
+
+# 3. Localiza a sessão gráfica XFCE existente do usuário e importa DISPLAY e XAUTHORITY
+XFCE_PID="$(pgrep -u "${TARGET_USER}" -f "xfce4-session" | head -n 1 || true)"
+if [[ -z "${XFCE_PID}" ]]; then
+    echo "[ERRO] Nenhuma sessão gráfica xfce4-session ativa encontrada para '${TARGET_USER}'. O Shadow não inicia antes do login gráfico." >&2
+    exit 1
+fi
+
+if [[ ! -r "/proc/${XFCE_PID}/environ" ]]; then
+    echo "[ERRO] Não foi possível ler o ambiente do processo xfce4-session (PID ${XFCE_PID})." >&2
+    exit 1
+fi
+
+DETECTED_DISPLAY="$(tr '\0' '\n' < "/proc/${XFCE_PID}/environ" | sed -n 's/^DISPLAY=//p' | head -n 1)"
+DETECTED_XAUTH="$(tr '\0' '\n' < "/proc/${XFCE_PID}/environ" | sed -n 's/^XAUTHORITY=//p' | head -n 1)"
+
+if [[ -z "${DETECTED_DISPLAY}" ]]; then
+    echo "[ERRO] Variável DISPLAY não encontrada na sessão XFCE (PID ${XFCE_PID})." >&2
+    exit 1
+fi
+
+if [[ -z "${DETECTED_XAUTH}" ]]; then
+    DETECTED_XAUTH="${HOME}/.Xauthority"
+fi
+
+if [[ ! -r "${DETECTED_XAUTH}" ]]; then
+    echo "[ERRO] Arquivo XAUTHORITY '${DETECTED_XAUTH}' não está acessível para '${TARGET_USER}'." >&2
+    exit 1
+fi
+
+export DISPLAY="${DETECTED_DISPLAY}"
+export XAUTHORITY="${DETECTED_XAUTH}"
+
+# 4. Monta argumentos fixos do freerdp-shadow-cli3
+SHADOW_BIN="/usr/bin/freerdp-shadow-cli3"
+if [[ ! -x "${SHADOW_BIN}" ]]; then
+    echo "[ERRO] Binário ${SHADOW_BIN} não encontrado. Instale o pacote freerdp3-shadow-x11." >&2
+    exit 1
+fi
+
+ARGS=(
+    "/port:${LOCAL_PORT}"
+    "/bind-address:127.0.0.1"
+)
+
+if [[ "${AUTH_ENABLED}" == "1" ]]; then
+    ARGS+=("+auth")
+else
+    ARGS+=("-auth")
+fi
+
+case "${SEC_MODE}" in
+    rdp|tls|nla) ARGS+=("/sec:${SEC_MODE}") ;;
+    *) ARGS+=("/sec:rdp") ;;
+esac
+
+if [[ "${GFX_ENABLED}" == "1" ]]; then
+    ARGS+=("-gfx")
+else
+    ARGS+=("+gfx")
+fi
+
+if [[ "${CURSOR_ENABLED}" == "1" ]]; then
+    ARGS+=("+server-side-cursor")
+else
+    ARGS+=("-server-side-cursor")
+fi
+
+echo "[INFO] Anexando FreeRDP Shadow ao DISPLAY=${DISPLAY} (PID XFCE=${XFCE_PID}) em 127.0.0.1:${LOCAL_PORT}"
+
+# 5. Inicia o FreeRDP Shadow em background e monitora o PID da sessão XFCE:
+# se a sessão gráfica XFCE encerrar, o Shadow para imediatamente.
+"${SHADOW_BIN}" "${ARGS[@]}" &
+SHADOW_PID=$!
+
+cleanup() {
+    if kill -0 "${SHADOW_PID}" 2>/dev/null; then
+        kill -TERM "${SHADOW_PID}" 2>/dev/null || true
+        wait "${SHADOW_PID}" 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT INT TERM
+
+while kill -0 "${SHADOW_PID}" 2>/dev/null; do
+    if ! kill -0 "${XFCE_PID}" 2>/dev/null; then
+        echo "[INFO] A sessão gráfica XFCE (PID ${XFCE_PID}) foi encerrada. Parando o serviço Shadow."
+        cleanup
+        exit 0
+    fi
+    sleep 2
+done
+
+wait "${SHADOW_PID}"
+

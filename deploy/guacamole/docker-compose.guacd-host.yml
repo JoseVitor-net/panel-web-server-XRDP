@@ -1,0 +1,27 @@
+# /opt/tv-panel/deploy/guacamole/docker-compose.guacd-host.yml
+# Execução recomendada do guacd 1.6.0 no Debian 13 (Trixie).
+#
+# POR QUE USAR network_mode: host COM -b 127.0.0.1?
+# 1. No Debian 13, o pacote nativo do sistema é baseado em FreeRDP 3, enquanto a imagem oficial
+#    `guacamole/guacd:1.6.0` traz internamente as bibliotecas estáveis do FreeRDP 2.x prontas para RDP Shadow.
+# 2. Dentro de um container Docker em rede bridge padrão, `127.0.0.1` refere-se ao loopback DO PRÓPRIO
+#    CONTAINER, e NÃO ao loopback (127.0.0.1) do host Debian 13 onde `freerdp-shadow-cli3` escuta nas
+#    portas 3391, 3392 e 3393.
+# 3. Jamais devemos expor o FreeRDP Shadow na interface LAN do host para contornar o isolamento do container.
+# 4. Com `network_mode: host` + `-b 127.0.0.1`, o processo `guacd` compartilha o namespace de loopback do
+#    host (alcançando 127.0.0.1:3391-3393 diretamente) e escuta apenas em 127.0.0.1:4822 (inacessível na LAN).
+
+services:
+  guacd:
+    image: guacamole/guacd:1.6.0
+    container_name: tv-panel-guacd
+    restart: unless-stopped
+    network_mode: host
+    command: ["/opt/guacamole/sbin/guacd", "-f", "-b", "127.0.0.1", "-l", "4822", "-L", "info"]
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/tmp
+    security_opt:
+      - no-new-privileges:true
+
