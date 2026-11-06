@@ -15,7 +15,7 @@ type TunnelPhase =
   | "disconnected"
   | "error";
 
-export const LiveShadowViewer: React.FC<LiveShadowViewerProps> = ({
+const LiveShadowViewerComponent: React.FC<LiveShadowViewerProps> = ({
   tv,
   csrfToken,
   onClose,
@@ -32,29 +32,51 @@ export const LiveShadowViewer: React.FC<LiveShadowViewerProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [keyboardEnabled, setKeyboardEnabled] = useState<boolean>(true);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [fitToScreen, setFitToScreen] = useState<boolean>(true);
+  const [compactToolbar, setCompactToolbar] = useState<boolean>(false);
   const [connectionAttempt, setConnectionAttempt] = useState<number>(1);
+  const [resolutionLabel, setResolutionLabel] = useState<string>("1920×1080");
+
   const scaleRef = useRef<number>(1);
+  const rafMouseRef = useRef<number | null>(null);
+  const pendingMouseStateRef = useRef<MouseState | null>(null);
 
-  const updateScale = useCallback((explicitW?: number, explicitH?: number) => {
-    const client = clientRef.current;
-    const viewport = viewportRef.current;
-    if (!client || !viewport) return;
-    const display = client.getDisplay();
-    const w = explicitW ?? display.getWidth();
-    const h = explicitH ?? display.getHeight();
-    if (w <= 0 || h <= 0) return;
-    if (viewport.clientWidth <= 0 || viewport.clientHeight <= 0) return;
+  const updateScale = useCallback(
+    (explicitW?: number, explicitH?: number) => {
+      const client = clientRef.current;
+      const viewport = viewportRef.current;
+      if (!client || !viewport) return;
+      const display = client.getDisplay();
+      const w = explicitW ?? display.getWidth();
+      const h = explicitH ?? display.getHeight();
+      if (w <= 0 || h <= 0) return;
+      setResolutionLabel(`${w}×${h}`);
 
-    const scaleX = viewport.clientWidth / w;
-    const scaleY = viewport.clientHeight / h;
-    const nextScale = Math.min(scaleX, scaleY, 1.5);
-    if (nextScale > 0) {
-      display.scale(nextScale);
-      scaleRef.current = nextScale;
-    }
-  }, []);
+      if (!fitToScreen) {
+        display.scale(1);
+        scaleRef.current = 1;
+        return;
+      }
+
+      if (viewport.clientWidth <= 0 || viewport.clientHeight <= 0) return;
+      const padW = Math.max(320, viewport.clientWidth - 16);
+      const padH = Math.max(240, viewport.clientHeight - 16);
+      const scaleX = padW / w;
+      const scaleY = padH / h;
+      const nextScale = Math.min(scaleX, scaleY, 1.35);
+      if (nextScale > 0) {
+        display.scale(nextScale);
+        scaleRef.current = nextScale;
+      }
+    },
+    [fitToScreen]
+  );
 
   const cleanupClient = useCallback(() => {
+    if (rafMouseRef.current !== null) {
+      window.cancelAnimationFrame(rafMouseRef.current);
+      rafMouseRef.current = null;
+    }
     if (keyboardRef.current) {
       keyboardRef.current.onkeydown = undefined;
       keyboardRef.current.onkeyup = undefined;
@@ -132,20 +154,43 @@ export const LiveShadowViewer: React.FC<LiveShadowViewerProps> = ({
       );
     };
 
-    // Controle de mouse com compensação de escala
+    // Controle de mouse com compensação de escala e throttling via requestAnimationFrame
+    // para movimentos puros (evita saturar o WebSocket em mouses de 1000Hz)
     const mouse = new Guacamole.Mouse(displayEl);
-    const forwardMouse = (mouseState: MouseState) => {
+    const scaleMouseState = (mouseState: MouseState): MouseState => {
       const s = scaleRef.current || 1;
-      const scaledState: MouseState = {
+      return {
         ...mouseState,
         x: Math.round(mouseState.x / s),
         y: Math.round(mouseState.y / s),
       };
-      client.sendMouseState(scaledState);
     };
-    mouse.onmousedown = forwardMouse;
-    mouse.onmouseup = forwardMouse;
-    mouse.onmousemove = forwardMouse;
+
+    const sendImmediateMouse = (mouseState: MouseState) => {
+      if (rafMouseRef.current !== null) {
+        window.cancelAnimationFrame(rafMouseRef.current);
+        rafMouseRef.current = null;
+      }
+      pendingMouseStateRef.current = null;
+      client.sendMouseState(scaleMouseState(mouseState));
+    };
+
+    const sendThrottledMove = (mouseState: MouseState) => {
+      pendingMouseStateRef.current = scaleMouseState(mouseState);
+      if (rafMouseRef.current === null) {
+        rafMouseRef.current = window.requestAnimationFrame(() => {
+          rafMouseRef.current = null;
+          if (pendingMouseStateRef.current && clientRef.current) {
+            clientRef.current.sendMouseState(pendingMouseStateRef.current);
+            pendingMouseStateRef.current = null;
+          }
+        });
+      }
+    };
+
+    mouse.onmousedown = sendImmediateMouse;
+    mouse.onmouseup = sendImmediateMouse;
+    mouse.onmousemove = sendThrottledMove;
 
     // Controle de teclado
     const keyboard = new Guacamole.Keyboard(window.document);
@@ -173,6 +218,10 @@ export const LiveShadowViewer: React.FC<LiveShadowViewerProps> = ({
   }, [tv.id, csrfToken, connectionAttempt, cleanupClient, updateScale]);
 
   useEffect(() => {
+    updateScale();
+  }, [fitToScreen, compactToolbar, updateScale]);
+
+  useEffect(() => {
     if (keyboardRef.current) {
       keyboardRef.current.onkeydown = (keysym: number) => {
         if (!keyboardEnabled) return true;
@@ -187,7 +236,7 @@ export const LiveShadowViewer: React.FC<LiveShadowViewerProps> = ({
   }, [keyboardEnabled]);
 
   const handleToggleFullscreen = async () => {
-    const container = viewportRef.current;
+    const container = viewportRef.current?.parentElement;
     if (!container) return;
     if (!document.fullscreenElement) {
       try {
@@ -215,64 +264,117 @@ export const LiveShadowViewer: React.FC<LiveShadowViewerProps> = ({
   };
 
   return (
-    <div className="viewer-overlay" role="dialog" aria-modal="true" aria-label={`Espelhamento ao vivo ${tv.name}`}>
+    <div
+      className="viewer-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Espelhamento ao vivo ${tv.name}`}
+    >
       <div className="viewer-container">
-        <header className="viewer-toolbar">
-          <div className="viewer-title-group">
-            <span className={`phase-dot phase-${phase}`} />
-            <div>
-              <h2>
-                {tv.name} <span className="mono-badge">{tv.slug}</span>
-              </h2>
-              <p className="viewer-subtitle">
-                Usuário XFCE: <strong>{tv.unix_user}</strong> ({tv.runtime.detected_display || "display ativo"}) •
-                Shadow Loopback: <code>127.0.0.1:{tv.local_port}</code> •
-                Desconectar o navegador <strong>não encerra</strong> a sessão XFCE da TV.
-              </p>
+        {!compactToolbar ? (
+          <header className="viewer-toolbar">
+            <div className="viewer-title-group">
+              <span className={`phase-dot phase-${phase}`} />
+              <div>
+                <div className="viewer-title-line">
+                  <h2>{tv.name}</h2>
+                  <span className="mono-badge">{tv.slug}</span>
+                  <span className="viewer-res-chip">{resolutionLabel}</span>
+                </div>
+                <p className="viewer-subtitle">
+                  Sessão XFCE: <strong>{tv.unix_user}</strong> (
+                  {tv.runtime.detected_display || "display ativo"}) • Loopback:{" "}
+                  <code>127.0.0.1:{tv.local_port}</code> • Desconectar a visão{" "}
+                  <strong>não encerra</strong> o XFCE da TV
+                </p>
+              </div>
             </div>
-          </div>
 
-          <div className="viewer-actions">
+            <div className="viewer-actions">
+              <button
+                type="button"
+                className={`btn btn-sm ${
+                  keyboardEnabled ? "btn-active-toggle" : "btn-secondary"
+                }`}
+                onClick={() => setKeyboardEnabled((v) => !v)}
+                title="Ativa ou pausa o envio de teclas para a sessão remota"
+              >
+                {keyboardEnabled ? "⌨ Teclado: Ativo" : "⌨ Teclado: Pausado"}
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => setFitToScreen((v) => !v)}
+                title="Alterna entre ajustar automaticamente à janela ou escala 100%"
+              >
+                {fitToScreen ? "⤢ Ajustado à Tela" : "1:1 Escala Real"}
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={handleToggleFullscreen}
+              >
+                {isFullscreen ? "Sair da Tela Cheia" : "⛶ Tela Cheia"}
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => setCompactToolbar(true)}
+                title="Recolher barra superior para ampliar a área útil"
+              >
+                ▲ Ocultar Barra
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={handleReconnect}
+              >
+                ↻ Reconectar
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-danger btn-sm"
+                onClick={handleDisconnectAndClose}
+              >
+                ✕ Fechar Visão
+              </button>
+            </div>
+          </header>
+        ) : (
+          <div className="viewer-floating-pill">
+            <span className={`phase-dot phase-${phase}`} />
+            <strong>{tv.slug.toUpperCase()}</strong>
             <button
               type="button"
-              className={`btn btn-secondary ${keyboardEnabled ? "btn-active-toggle" : ""}`}
-              onClick={() => setKeyboardEnabled((v) => !v)}
-              title="Ativa ou pausa o envio de teclas para a sessão remota"
+              className="btn btn-secondary btn-xs"
+              onClick={() => setCompactToolbar(false)}
             >
-              {keyboardEnabled ? "Teclado: Ativo" : "Teclado: Pausado"}
+              ▼ Mostrar Barra
             </button>
-
             <button
               type="button"
-              className="btn btn-secondary"
-              onClick={handleToggleFullscreen}
-            >
-              {isFullscreen ? "Sair da Tela Cheia" : "Tela Cheia"}
-            </button>
-
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={handleReconnect}
-            >
-              Reconectar
-            </button>
-
-            <button
-              type="button"
-              className="btn btn-danger"
+              className="btn btn-danger btn-xs"
               onClick={handleDisconnectAndClose}
             >
-              Desconectar Visão
+              ✕ Sair
             </button>
           </div>
-        </header>
+        )}
 
         <div className="viewer-viewport" ref={viewportRef}>
           {phase === "connecting" && (
             <div className="viewer-status-banner">
               <div className="spinner" />
-              <p>Conectando ao FreeRDP Shadow em <code>127.0.0.1:{tv.local_port}</code> via Guacamole (`guacd`)...</p>
+              <h3>Conectando à sessão gráfica da {tv.name}</h3>
+              <p>
+                Anexando via <code>guacd</code> ao FreeRDP Shadow em{" "}
+                <code>127.0.0.1:{tv.local_port}</code> ({tv.unix_user})...
+              </p>
             </div>
           )}
 
@@ -281,10 +383,18 @@ export const LiveShadowViewer: React.FC<LiveShadowViewerProps> = ({
               <h3>Não foi possível abrir o espelhamento ao vivo</h3>
               <p>{errorMessage}</p>
               <div className="banner-actions">
-                <button type="button" className="btn btn-primary" onClick={handleReconnect}>
-                  Tentar Novamente
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={handleReconnect}
+                >
+                  ↻ Tentar Novamente
                 </button>
-                <button type="button" className="btn btn-secondary" onClick={handleDisconnectAndClose}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={handleDisconnectAndClose}
+                >
                   Voltar ao Painel
                 </button>
               </div>
@@ -293,13 +403,24 @@ export const LiveShadowViewer: React.FC<LiveShadowViewerProps> = ({
 
           {phase === "disconnected" && (
             <div className="viewer-status-banner">
-              <h3>Conexão encerrada</h3>
-              <p>A visualização no navegador foi desconectada. A sessão gráfica XFCE na TV permanece intacta.</p>
+              <h3>Visualização encerrada</h3>
+              <p>
+                O túnel do navegador foi desconectado. A sessão gráfica XFCE na
+                TV permanece ativa e intacta.
+              </p>
               <div className="banner-actions">
-                <button type="button" className="btn btn-primary" onClick={handleReconnect}>
-                  Reconectar
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={handleReconnect}
+                >
+                  ↻ Reconectar Agora
                 </button>
-                <button type="button" className="btn btn-secondary" onClick={handleDisconnectAndClose}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={handleDisconnectAndClose}
+                >
                   Fechar
                 </button>
               </div>
@@ -316,3 +437,5 @@ export const LiveShadowViewer: React.FC<LiveShadowViewerProps> = ({
     </div>
   );
 };
+
+export const LiveShadowViewer = React.memo(LiveShadowViewerComponent);

@@ -124,9 +124,14 @@ if [[ ! -x "${SHADOW_BIN}" ]]; then
     exit 1
 fi
 
+# Garante diretório de certificado TLS local do FreeRDP 3 no HOME do usuário da TV
+mkdir -p "${HOME}/.config/freerdp/server" 2>/dev/null || true
+
 ARGS=(
     "/port:${LOCAL_PORT}"
     "/bind-address:127.0.0.1"
+    "+may-view"
+    "+may-interact"
 )
 
 if [[ "${AUTH_ENABLED}" == "1" ]]; then
@@ -135,9 +140,11 @@ else
     ARGS+=("-auth")
 fi
 
+# No FreeRDP 3.15 (Debian 13), /sec:rdp em 127.0.0.1 desativa a criptografia RDP ("Turning off encryption for local peer")
+# e causa erro BIO_read no guacd. Usando TLS padrão do FreeRDP 3 (ou /sec:tls), o handshake com guacd funciona sem queda.
 case "${SEC_MODE}" in
-    rdp|tls|nla) ARGS+=("/sec:${SEC_MODE}") ;;
-    *) ARGS+=("/sec:rdp") ;;
+    nla) ARGS+=("/sec:nla") ;;
+    tls|rdp|*) ARGS+=("/sec:tls") ;;
 esac
 
 if [[ "${GFX_ENABLED}" == "1" ]]; then

@@ -2,6 +2,7 @@ import os
 import pwd
 import re
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,14 @@ from app.security import iso_utc
 
 # Registro em memória de conexões WebSocket ativas por TV ID
 _ACTIVE_WS_VIEWERS: dict[int, int] = {}
+
+# Cache leve de inspeção (evita dezenas de forks de subprocessos por requisição e elimina travamentos)
+_RUNTIME_CACHE: dict[int, tuple[float, TVRuntimeState]] = {}
+_CACHE_TTL_SECONDS = 2.0
+
+# Cooldown para auto-start de unidades systemd (evita bloquear chamadas GET repetidamente)
+_LAST_AUTOSTART_ATTEMPT: dict[str, float] = {}
+_AUTOSTART_COOLDOWN_SECONDS = 45.0
 
 # Estado simulado para ambiente de teste/homologação (quando TV_PANEL_ENV_MODE=simulation)
 _SIMULATED_STATE: dict[str, dict[str, Any]] = {
@@ -41,8 +50,16 @@ _SIMULATED_STATE: dict[str, dict[str, Any]] = {
 }
 
 
+def invalidate_runtime_cache(tv_id: int | None = None) -> None:
+    if tv_id is None:
+        _RUNTIME_CACHE.clear()
+    else:
+        _RUNTIME_CACHE.pop(tv_id, None)
+
+
 def register_ws_viewer(tv_id: int) -> None:
     _ACTIVE_WS_VIEWERS[tv_id] = _ACTIVE_WS_VIEWERS.get(tv_id, 0) + 1
+    invalidate_runtime_cache(tv_id)
 
 
 def unregister_ws_viewer(tv_id: int) -> None:
@@ -51,6 +68,7 @@ def unregister_ws_viewer(tv_id: int) -> None:
         _ACTIVE_WS_VIEWERS.pop(tv_id, None)
     else:
         _ACTIVE_WS_VIEWERS[tv_id] = current - 1
+    invalidate_runtime_cache(tv_id)
 
 
 def get_ws_viewer_count(tv_id: int) -> int:
@@ -70,7 +88,7 @@ def build_shadow_flags_preview(tv_row: dict[str, Any]) -> str:
     )
     return (
         f"/port:{port} /bind-address:127.0.0.1 {auth_flag} "
-        f"/sec:{sec_mode} {gfx_flag} {cursor_flag}"
+        f"/sec:{sec_mode} {gfx_flag} {cursor_flag} +may-view +may-interact"
     )
 
 
@@ -82,11 +100,7 @@ def _validate_safe_unix_user(unix_user: str) -> None:
 def _find_xfce_display_and_xauth_linux(unix_user: str) -> tuple[bool, str | None, bool]:
     """
     Inspeciona no Debian 13 se o usuário possui uma sessão gráfica XFCE/XRDP ativa
-    e descobre o número real do DISPLAY (ex: :10.0, :11.0, :12.0) mesmo sem privilégio de root,
-    verificando:
-    1. Processos de sessão gráfica do usuário (xfce4-session, x-session-manager, startxfce4, Xorg, Xvnc)
-    2. Sockets X11 em /tmp/.X11-unix/X* pertencentes ao UID do usuário
-    3. Argumentos de linha de comando do Xorg/Xvnc do usuário (ps -u <user> -o args=)
+    e descobre o número real do DISPLAY (ex: :10.0, :11.0, :12.0) mesmo sem privilégio de root.
     """
     try:
         pw_entry = pwd.getpwnam(unix_user)
@@ -104,13 +118,13 @@ def _find_xfce_display_and_xauth_linux(unix_user: str) -> tuple[bool, str | None
         ],
         capture_output=True,
         text=True,
-        timeout=3.0,
+        timeout=1.5,
         check=False,
     )
     if proc.returncode != 0 or not proc.stdout.strip():
         return False, None, False
 
-    # 1. Tenta descobrir o número do display pelos sockets /tmp/.X11-unix/X* pertencentes ao UID do usuário
+    # 1. Descobre o número do display pelos sockets /tmp/.X11-unix/X* pertencentes ao UID do usuário
     x11_dir = Path("/tmp/.X11-unix")
     if x11_dir.is_dir():
         try:
@@ -121,12 +135,12 @@ def _find_xfce_display_and_xauth_linux(unix_user: str) -> tuple[bool, str | None
         except OSError:
             pass
 
-    # 2. Tenta descobrir via argumentos do processo Xorg / Xvnc do usuário (ex: Xorg :12 -auth .Xauthority)
+    # 2. Fallback rápido via argumentos do processo Xorg / Xvnc do usuário
     ps_proc = subprocess.run(
         ["/usr/bin/ps", "-u", unix_user, "-o", "args="],
         capture_output=True,
         text=True,
-        timeout=3.0,
+        timeout=1.5,
         check=False,
     )
     if ps_proc.returncode == 0:
@@ -148,7 +162,7 @@ def _inspect_shadow_port_linux(local_port: int) -> tuple[str, str | None, int]:
         [ss_bin, "-H", "-tln", f"sport = :{local_port}"],
         capture_output=True,
         text=True,
-        timeout=3.0,
+        timeout=1.5,
         check=False,
     )
     if listen_proc.returncode != 0:
@@ -173,7 +187,7 @@ def _inspect_shadow_port_linux(local_port: int) -> tuple[str, str | None, int]:
         [ss_bin, "-H", "-tn", "state", "established", f"sport = :{local_port}"],
         capture_output=True,
         text=True,
-        timeout=3.0,
+        timeout=1.5,
         check=False,
     )
     estab_lines = [
@@ -188,21 +202,20 @@ def _inspect_systemd_unit_linux(unix_user: str) -> tuple[str, str]:
         ["/usr/bin/systemctl", "is-active", unit_name],
         capture_output=True,
         text=True,
-        timeout=3.0,
+        timeout=1.5,
         check=False,
     )
     state = proc.stdout.strip() or "unknown"
     return unit_name, state
 
 
-def inspect_tv_runtime(tv_row: dict[str, Any]) -> TVRuntimeState:
+def inspect_tv_runtime(tv_row: dict[str, Any], *, force_refresh: bool = False) -> TVRuntimeState:
     """
     Inspeciona o estado real da TV separando estritamente:
     1. Sessão gráfica XFCE (active / inactive / unknown)
     2. Serviço FreeRDP Shadow na porta local (available / unavailable / conflict / error / unknown)
     3. Espectador conectado (connected / idle / unknown)
-    Se a sessão XFCE estiver ativa e a TV habilitada, mas a unidade systemd estiver parada,
-    aciona automaticamente o início da unidade tv-shadow@<user>.service.
+    Usa cache curto em produção para responder instantaneamente e não travar o painel.
     """
     settings = get_settings()
     now_str = iso_utc()
@@ -280,6 +293,12 @@ def inspect_tv_runtime(tv_row: dict[str, Any]) -> TVRuntimeState:
             last_checked_at=now_str,
         )
 
+    now_mono = time.monotonic()
+    if not force_refresh and tv_id in _RUNTIME_CACHE:
+        cached_at, cached_state = _RUNTIME_CACHE[tv_id]
+        if (now_mono - cached_at) < _CACHE_TTL_SECONDS:
+            return cached_state
+
     # Modo Produção (Debian 13 Linux)
     try:
         _validate_safe_unix_user(unix_user)
@@ -287,18 +306,20 @@ def inspect_tv_runtime(tv_row: dict[str, Any]) -> TVRuntimeState:
         unit_name, unit_state = _inspect_systemd_unit_linux(unix_user)
         shadow_port_state, conflict_msg, tcp_estab = _inspect_shadow_port_linux(local_port)
 
-        # Auto-ativação: se a sessão XFCE acabou de subir e a porta está livre mas o serviço está inativo/failed,
-        # inicia automaticamente a unidade systemd daquela TV.
+        # Auto-ativação não-bloqueante com cooldown de 45s (evita travar a API em polls sucessivos)
         if xfce_active and shadow_port_state == "unavailable" and unit_state in ("inactive", "failed"):
-            subprocess.run(
-                ["/usr/bin/sudo", "-n", "/usr/bin/systemctl", "start", unit_name],
-                capture_output=True,
-                text=True,
-                timeout=4.0,
-                check=False,
-            )
-            unit_name, unit_state = _inspect_systemd_unit_linux(unix_user)
-            shadow_port_state, conflict_msg, tcp_estab = _inspect_shadow_port_linux(local_port)
+            last_try = _LAST_AUTOSTART_ATTEMPT.get(unix_user, 0.0)
+            if (now_mono - last_try) >= _AUTOSTART_COOLDOWN_SECONDS:
+                _LAST_AUTOSTART_ATTEMPT[unix_user] = now_mono
+                try:
+                    subprocess.Popen(
+                        ["/usr/bin/sudo", "-n", "/usr/bin/systemctl", "start", unit_name],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                    unit_state = "activating"
+                except Exception:
+                    pass
 
         xfce_state_str = "active" if xfce_active else "inactive"
         total_viewers = max(ws_viewers, tcp_estab)
@@ -316,7 +337,11 @@ def inspect_tv_runtime(tv_row: dict[str, Any]) -> TVRuntimeState:
                 + (" Há operador conectado." if total_viewers > 0 else " Pronta para conexão.")
             )
         elif xfce_active and shadow_port_state != "available":
-            shadow_state_str = "starting" if unit_state in ("activating", "active") else ("error" if unit_state == "failed" else "unavailable")
+            shadow_state_str = (
+                "starting"
+                if unit_state in ("activating", "active")
+                else ("error" if unit_state == "failed" else "unavailable")
+            )
             overall_str = "degraded"
             user_msg = (
                 f"Sessão XFCE ativa ({display_val}), aguardando listener Shadow em 127.0.0.1:{local_port} ({unit_state})."
@@ -326,7 +351,7 @@ def inspect_tv_runtime(tv_row: dict[str, Any]) -> TVRuntimeState:
             overall_str = "offline"
             user_msg = f"Sem sessão XFCE ativa para '{unix_user}'. O Shadow aguarda login gráfico."
 
-        return TVRuntimeState(
+        result = TVRuntimeState(
             overall_status=overall_str,
             xfce_session_state=xfce_state_str,
             shadow_service_state=shadow_state_str,
@@ -340,6 +365,8 @@ def inspect_tv_runtime(tv_row: dict[str, Any]) -> TVRuntimeState:
             user_message=user_msg,
             last_checked_at=now_str,
         )
+        _RUNTIME_CACHE[tv_id] = (now_mono, result)
+        return result
     except Exception:
         return TVRuntimeState(
             overall_status="unknown",
@@ -368,6 +395,7 @@ def control_tv_shadow_service(
         return False, "Ação de serviço inválida."
 
     settings = get_settings()
+    tv_id = int(tv_row["id"])
     slug = str(tv_row["slug"])
     unix_user = str(tv_row["unix_user"])
     local_port = int(tv_row["local_port"])
@@ -377,6 +405,7 @@ def control_tv_shadow_service(
         return False, "Operação bloqueada: a porta 3389 pertence ao XRDP principal."
 
     unit_name = f"tv-shadow@{unix_user}.service"
+    invalidate_runtime_cache(tv_id)
 
     if settings.env_mode == "simulation" or os.name == "nt":
         sim = _SIMULATED_STATE.setdefault(
@@ -384,7 +413,7 @@ def control_tv_shadow_service(
             {
                 "xfce_session_state": "active",
                 "shadow_service_state": "unavailable",
-                "detected_display": f":{10 + int(tv_row['id'])}.0",
+                "detected_display": f":{10 + tv_id}.0",
                 "xauthority_ready": True,
                 "systemd_active_state": "inactive",
                 "port_conflict_detail": None,
@@ -417,9 +446,10 @@ def control_tv_shadow_service(
             ["/usr/bin/sudo", "-n", "/usr/bin/systemctl", action, unit_name],
             capture_output=True,
             text=True,
-            timeout=8.0,
+            timeout=6.0,
             check=False,
         )
+        invalidate_runtime_cache(tv_id)
         if proc.returncode != 0:
             return (
                 False,

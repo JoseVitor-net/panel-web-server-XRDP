@@ -1,3 +1,4 @@
+import asyncio
 import hmac
 import json
 import sqlite3
@@ -34,6 +35,7 @@ from app.services.system_inspector import (
     build_shadow_flags_preview,
     control_tv_shadow_service,
     inspect_tv_runtime,
+    invalidate_runtime_cache,
     register_ws_viewer,
     unregister_ws_viewer,
 )
@@ -516,6 +518,7 @@ def update_tv(
         },
     )
 
+    invalidate_runtime_cache(tv_id)
     updated = conn.execute("SELECT * FROM tvs WHERE id = ?", (tv_id,)).fetchone()
     return _row_to_tv_response(updated)
 
@@ -636,7 +639,7 @@ async def tv_guacamole_websocket(
             return
 
         tv_dict: dict[str, Any] = dict(tv_row)
-        runtime = inspect_tv_runtime(tv_dict)
+        runtime = await asyncio.to_thread(inspect_tv_runtime, tv_dict)
         if not tv_dict["enabled"] or runtime.overall_status != "online":
             await websocket.accept(subprotocol="guacamole")
             await websocket.send_text(

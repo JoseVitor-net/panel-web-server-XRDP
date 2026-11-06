@@ -56,12 +56,12 @@ def build_rdp_connection_params(tv_row: dict[str, Any], width: int, height: int)
     """
     port = str(int(tv_row["local_port"]))
     sec_mode = str(tv_row.get("sec_mode", "rdp"))
-    # IMPORTANTE: anexar-se ao FreeRDP Shadow em 127.0.0.1 com color-depth=32 (nativo do X11 Shadow)
-    # e desativando canais de áudio e caches legados que causam desconexão no freerdp-shadow-cli3
+    # IMPORTANTE: Usa security="any" com ignore-cert="true" para negociar automaticamente TLS/RDP com o
+    # freerdp-shadow-cli3 em 127.0.0.1, e color-depth="32" para coincidir com a superfície X11 (1920x1080@32).
     return {
         "hostname": "127.0.0.1",
         "port": port,
-        "security": sec_mode if sec_mode in ("rdp", "tls", "nla", "any") else "any",
+        "security": "nla" if sec_mode == "nla" else "any",
         "ignore-cert": "true",
         "disable-auth": "false" if tv_row.get("shadow_auth_enabled") else "true",
         "width": str(max(640, min(width, 3840))),
@@ -182,28 +182,21 @@ async def run_guacd_websocket_tunnel(
                 pass
 
         async def guacd_to_browser(initial_buf: str) -> None:
-            server_buf = initial_buf
+            if initial_buf:
+                await websocket.send_text(initial_buf)
             decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
             while True:
-                if server_buf:
-                    out_instructions: list[str] = []
-                    while True:
-                        parsed, server_buf = parse_guac_instruction(server_buf)
-                        if parsed is None:
-                            break
-                        if parsed[0] == "error":
-                            logger.warning("guacd reportou erro para TV %s: %s", tv_row.get("slug"), parsed)
-                        out_instructions.append(encode_guac_instruction(*parsed))
-                    if out_instructions:
-                        await websocket.send_text("".join(out_instructions))
-
-                data = await reader.read(32768)
+                data = await reader.read(65536)
                 if not data:
-                    server_buf += decoder.decode(b"", final=True)
-                    if server_buf:
-                        await websocket.send_text(server_buf)
+                    tail = decoder.decode(b"", final=True)
+                    if tail:
+                        await websocket.send_text(tail)
                     break
-                server_buf += decoder.decode(data, final=False)
+                text = decoder.decode(data, final=False)
+                if text:
+                    if "5.error," in text:
+                        logger.warning("guacd reportou erro para TV %s: %s", tv_row.get("slug"), text[:200])
+                    await websocket.send_text(text)
 
         done, pending = await asyncio.wait(
             [

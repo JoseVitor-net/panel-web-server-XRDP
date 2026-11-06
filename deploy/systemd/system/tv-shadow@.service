@@ -25,10 +25,10 @@ IPAccounting=yes
 IPAddressAllow=127.0.0.1/32
 IPAddressDeny=any
 
-# Endurecimento de segurança (mantendo leitura de /tmp/.X11-unix e /home/%i/.Xauthority)
+# Endurecimento de segurança (mantendo leitura de /tmp/.X11-unix, escrita em /home/%i/.config/freerdp e proteção de /var/lib/tv-panel)
 NoNewPrivileges=yes
 PrivateTmp=no
-ProtectSystem=strict
+ProtectSystem=full
 ReadOnlyPaths=/var/lib/tv-panel
 
 [Install]
