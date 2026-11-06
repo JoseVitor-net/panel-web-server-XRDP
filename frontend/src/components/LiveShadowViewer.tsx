@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import Guacamole, { Client, Keyboard, Mouse, MouseState } from "guacamole-common-js";
+import Guacamole, { Client, Keyboard, MouseState } from "guacamole-common-js";
 import { TVItem } from "../types";
 
 interface LiveShadowViewerProps {
