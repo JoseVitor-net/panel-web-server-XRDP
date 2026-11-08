@@ -19,7 +19,7 @@ services:
     container_name: tv-panel-guacd
     restart: unless-stopped
     network_mode: host
-    command: ["-b", "127.0.0.1", "-l", "4822", "-L", "info"]
+    command: ["/opt/guacamole/sbin/guacd", "-f", "-b", "127.0.0.1", "-l", "4822", "-L", "info"]
     security_opt:
       - no-new-privileges:true
 

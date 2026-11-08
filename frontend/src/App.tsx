@@ -2,9 +2,9 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "./api";
 import { LiveShadowViewer } from "./components/LiveShadowViewer";
 import {
-  AdminSession,
   AuditLogItem,
-  OverallTVStatus,
+  AuthSession,
+  OverallStatus,
   TVFormPayload,
   TVItem,
 } from "./types";
@@ -12,8 +12,10 @@ import {
 const INITIAL_FORM: TVFormPayload = {
   slug: "",
   name: "",
+  location: "",
   unix_user: "",
   local_port: 3394,
+  display_number: null,
   sec_mode: "tls",
   gfx_enabled: true,
   server_side_cursor: true,
@@ -22,18 +24,16 @@ const INITIAL_FORM: TVFormPayload = {
   notes: "",
 };
 
-function statusLabel(status: OverallTVStatus): string {
+function statusLabel(status: OverallStatus): string {
   switch (status) {
     case "online":
       return "Sinal Ativo";
-    case "session_inactive":
+    case "offline":
       return "Sem Sessão XFCE";
-    case "shadow_unavailable":
+    case "degraded":
       return "Shadow Parado";
     case "disabled":
       return "Desabilitada";
-    case "error":
-      return "Conflito / Erro";
     case "unknown":
     default:
       return "Não Verificado";
@@ -57,10 +57,14 @@ function shadowStateText(
   switch (state) {
     case "available":
       return "Escutando";
+    case "starting":
+      return "Iniciando";
     case "unavailable":
       return "Indisponível";
-    case "port_conflict":
+    case "conflict":
       return "Conflito Porta";
+    case "error":
+      return "Erro Serviço";
     default:
       return "Indefinido";
   }
@@ -90,7 +94,7 @@ interface PendingConfirmation {
 type StatusFilter = "all" | "online" | "attention" | "offline";
 
 export const App: React.FC = () => {
-  const [session, setSession] = useState<AdminSession | null>(null);
+  const [session, setSession] = useState<AuthSession | null>(null);
   const [authChecking, setAuthChecking] = useState<boolean>(true);
 
   const [loginUser, setLoginUser] = useState<string>("");
@@ -256,8 +260,10 @@ export const App: React.FC = () => {
     setFormData({
       slug: tv.slug,
       name: tv.name,
+      location: tv.location || "",
       unix_user: tv.unix_user,
       local_port: tv.local_port,
+      display_number: tv.display_number ?? null,
       sec_mode: tv.sec_mode,
       gfx_enabled: tv.gfx_enabled,
       server_side_cursor: tv.server_side_cursor,
@@ -332,7 +338,7 @@ export const App: React.FC = () => {
     setBusyTvId(tv.id);
     setBannerNotice(null);
     try {
-      const updated = await api.serviceAction(
+      const updated = await api.controlService(
         tv.id,
         action,
         confirmDisruption,
@@ -399,7 +405,7 @@ export const App: React.FC = () => {
       (t) => t.runtime.shadow_service_state === "available"
     ).length;
     const activeViewers = tvs.reduce(
-      (acc, t) => acc + (t.runtime.active_viewers || 0),
+      (acc, t) => acc + (t.runtime.active_viewers_count || 0),
       0
     );
     return { total, online, xfceActive, shadowReady, activeViewers };
@@ -413,15 +419,14 @@ export const App: React.FC = () => {
       }
       if (
         statusFilter === "attention" &&
-        tv.runtime.overall_status !== "shadow_unavailable" &&
-        tv.runtime.overall_status !== "error" &&
+        tv.runtime.overall_status !== "degraded" &&
         tv.runtime.overall_status !== "unknown"
       ) {
         return false;
       }
       if (
         statusFilter === "offline" &&
-        tv.runtime.overall_status !== "session_inactive" &&
+        tv.runtime.overall_status !== "offline" &&
         tv.runtime.overall_status !== "disabled"
       ) {
         return false;
@@ -959,7 +964,7 @@ export const App: React.FC = () => {
                           </span>
                           {rt.viewer_connection_state === "connected" && (
                             <span className="monitor-live-tally">
-                              ● EM EXIBIÇÃO ({rt.active_viewers})
+                              ● EM EXIBIÇÃO ({rt.active_viewers_count})
                             </span>
                           )}
                         </div>
@@ -979,7 +984,7 @@ export const App: React.FC = () => {
                               </div>
                               <strong>Abrir Espelhamento ao Vivo</strong>
                               <small>
-                                Sessão XFCE ativa (PID {rt.xfce_pid}) •{" "}
+                                Sessão XFCE ativa ({rt.detected_display || ":10.0"}) •{" "}
                                 {tv.sec_mode.toUpperCase()} 1080p
                               </small>
                             </div>
@@ -1040,7 +1045,8 @@ export const App: React.FC = () => {
                               className={`dot dot-${
                                 rt.shadow_service_state === "available"
                                   ? "green"
-                                  : rt.shadow_service_state === "port_conflict"
+                                  : rt.shadow_service_state === "conflict" ||
+                                    rt.shadow_service_state === "error"
                                   ? "red"
                                   : "amber"
                               }`}
@@ -1061,7 +1067,7 @@ export const App: React.FC = () => {
                             />
                             {viewerStateText(
                               rt.viewer_connection_state,
-                              rt.active_viewers
+                              rt.active_viewers_count
                             )}
                           </span>
                         </div>

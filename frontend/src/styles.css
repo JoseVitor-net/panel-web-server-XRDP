@@ -700,15 +700,15 @@ code {
   border-top: 2px solid var(--emerald);
 }
 
-.status-border-session_inactive {
+.status-border-offline,
+.status-border-disabled {
   border-top: 2px solid #475569;
 }
 
-.status-border-shadow_unavailable {
+.status-border-degraded {
   border-top: 2px solid var(--amber);
 }
 
-.status-border-error,
 .status-border-unknown {
   border-top: 2px solid var(--danger);
 }
@@ -776,20 +776,19 @@ code {
   border: 1px solid rgba(16, 185, 129, 0.32);
 }
 
-.status-session_inactive,
+.status-offline,
 .status-disabled {
   background: rgba(148, 163, 184, 0.12);
   color: #94a3b8;
   border: 1px solid rgba(148, 163, 184, 0.22);
 }
 
-.status-shadow_unavailable {
+.status-degraded {
   background: rgba(245, 158, 11, 0.14);
   color: #fbbf24;
   border: 1px solid rgba(245, 158, 11, 0.32);
 }
 
-.status-error,
 .status-unknown {
   background: rgba(239, 68, 68, 0.14);
   color: #f87171;
