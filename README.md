@@ -98,7 +98,7 @@ sudo bash deploy/scripts/install-debian13.sh
 ```
 
 ### Passo 4: Iniciar o daemon `guacd` em loopback (`127.0.0.1:4822`)
-Com Docker Compose (recomendado para Debian 13 pela compatibilidade FreeRDP 2 estável no `guacd 1.6.0`):
+Com Docker Compose (recomendado para Debian 13 pela compatibilidade FreeRDP 2 estável no `guacd 1.5.5`, evitando o crash `GUACAMOLE-2321` do `guacd 1.6.0`):
 ```bash
 docker compose -f deploy/guacamole/docker-compose.guacd-host.yml up -d
 ```
