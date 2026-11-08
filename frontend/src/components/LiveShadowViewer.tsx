@@ -38,6 +38,8 @@ const LiveShadowViewerComponent: React.FC<LiveShadowViewerProps> = ({
   const [resolutionLabel, setResolutionLabel] = useState<string>("1920×1080");
 
   const scaleRef = useRef<number>(1);
+  const fitToScreenRef = useRef<boolean>(fitToScreen);
+  fitToScreenRef.current = fitToScreen;
   const rafMouseRef = useRef<number | null>(null);
   const pendingMouseStateRef = useRef<MouseState | null>(null);
 
@@ -52,7 +54,7 @@ const LiveShadowViewerComponent: React.FC<LiveShadowViewerProps> = ({
       if (w <= 0 || h <= 0) return;
       setResolutionLabel(`${w}×${h}`);
 
-      if (!fitToScreen) {
+      if (!fitToScreenRef.current) {
         display.scale(1);
         scaleRef.current = 1;
         return;
@@ -69,7 +71,7 @@ const LiveShadowViewerComponent: React.FC<LiveShadowViewerProps> = ({
         scaleRef.current = nextScale;
       }
     },
-    [fitToScreen]
+    []
   );
 
   const cleanupClient = useCallback(() => {

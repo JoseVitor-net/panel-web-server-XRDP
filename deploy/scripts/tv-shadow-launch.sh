@@ -77,10 +77,10 @@ DETECTED_XAUTH=""
 for pid in $(pgrep -u "${TARGET_USER}" || true); do
     if [[ -r "/proc/${pid}/environ" ]]; then
         if [[ -z "${DETECTED_DISPLAY}" ]]; then
-            DETECTED_DISPLAY="$(tr '\0' '\n' < "/proc/${pid}/environ" 2>/dev/null | sed -n 's/^DISPLAY=//p' | head -n 1 || true)"
+            DETECTED_DISPLAY="$({ tr '\0' '\n' < "/proc/${pid}/environ"; } 2>/dev/null | sed -n 's/^DISPLAY=//p' | head -n 1 || true)"
         fi
         if [[ -z "${DETECTED_XAUTH}" ]]; then
-            DETECTED_XAUTH="$(tr '\0' '\n' < "/proc/${pid}/environ" 2>/dev/null | sed -n 's/^XAUTHORITY=//p' | head -n 1 || true)"
+            DETECTED_XAUTH="$({ tr '\0' '\n' < "/proc/${pid}/environ"; } 2>/dev/null | sed -n 's/^XAUTHORITY=//p' | head -n 1 || true)"
         fi
         if [[ -n "${DETECTED_DISPLAY}" && -n "${DETECTED_XAUTH}" ]]; then
             break

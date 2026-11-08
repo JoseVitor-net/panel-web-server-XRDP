@@ -49,6 +49,46 @@ def parse_guac_instruction(buffer: str) -> tuple[list[str] | None, str]:
     return None, buffer
 
 
+def split_complete_guac_instructions(buffer: str) -> tuple[str, str]:
+    """
+    Divide o buffer acumulado em (lote_de_instrucoes_completas, cauda_incompleta).
+    O Guacamole.WebSocketTunnel no navegador exige que CADA frame WebSocket contenha
+    apenas instruções completas terminadas em ';'. Caso um chunk TCP de 64KB corte
+    uma instrução 'blob' no meio, enviar o chunk incompleto faz o WebSocketTunnel
+    disparar 'Incomplete instruction' e encerrar o socket imediatamente.
+    Esta função avança pelos comprimentos em O(K) saltando o corpo dos blobs em O(1).
+    """
+    idx = 0
+    n = len(buffer)
+    last_complete_end = 0
+
+    while idx < n:
+        dot_pos = buffer.find(".", idx)
+        if dot_pos == -1:
+            break
+        length_str = buffer[idx:dot_pos]
+        if not length_str.isdigit():
+            raise ValueError(
+                f"Protocolo Guacamole inválido no stream do guacd: '{length_str[:32]}'"
+            )
+        length = int(length_str)
+        val_end = dot_pos + 1 + length
+        if val_end >= n:
+            break
+        terminator = buffer[val_end]
+        idx = val_end + 1
+        if terminator == ";":
+            last_complete_end = idx
+        elif terminator != ",":
+            raise ValueError(
+                f"Terminador inesperado no stream do guacd: '{terminator}'"
+            )
+
+    if last_complete_end == 0:
+        return "", buffer
+    return buffer[:last_complete_end], buffer[last_complete_end:]
+
+
 def build_rdp_connection_params(tv_row: dict[str, Any], width: int, height: int) -> dict[str, str]:
     """
     Constrói os parâmetros seguros de conexão RDP entre guacd e o FreeRDP Shadow local.
@@ -146,8 +186,14 @@ async def run_guacd_websocket_tunnel(
         await writer.drain()
 
         # 4. Envia o UUID interno do túnel (opcode vazio "") esperado pelo Guacamole.WebSocketTunnel
+        ws_send_lock = asyncio.Lock()
+
+        async def send_ws_text(payload: str) -> None:
+            async with ws_send_lock:
+                await websocket.send_text(payload)
+
         tunnel_uuid = str(uuid.uuid4())
-        await websocket.send_text(encode_guac_instruction("", tunnel_uuid))
+        await send_ws_text(encode_guac_instruction("", tunnel_uuid))
 
         async def browser_to_guacd() -> None:
             client_buf = ""
@@ -169,7 +215,7 @@ async def run_guacd_websocket_tunnel(
                         # Intercepta instruções internas do WebSocketTunnel (opcode == "")
                         if len(parsed) >= 1 and parsed[0] == "":
                             if len(parsed) >= 3 and parsed[1] == "ping":
-                                await websocket.send_text(
+                                await send_ws_text(
                                     encode_guac_instruction("", "ping", parsed[2])
                                 )
                             continue
@@ -182,33 +228,56 @@ async def run_guacd_websocket_tunnel(
                 pass
 
         async def guacd_to_browser(initial_buf: str) -> None:
-            if initial_buf:
-                await websocket.send_text(initial_buf)
+            guac_buf = initial_buf
+            if guac_buf:
+                complete_batch, guac_buf = split_complete_guac_instructions(guac_buf)
+                if complete_batch:
+                    await send_ws_text(complete_batch)
             decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
             while True:
                 data = await reader.read(65536)
                 if not data:
                     tail = decoder.decode(b"", final=True)
                     if tail:
-                        await websocket.send_text(tail)
+                        guac_buf += tail
+                    if guac_buf:
+                        complete_batch, _ = split_complete_guac_instructions(guac_buf)
+                        if complete_batch:
+                            await send_ws_text(complete_batch)
                     break
                 text = decoder.decode(data, final=False)
                 if text:
-                    if "5.error," in text:
-                        logger.warning("guacd reportou erro para TV %s: %s", tv_row.get("slug"), text[:200])
-                    await websocket.send_text(text)
+                    guac_buf += text
+                    complete_batch, guac_buf = split_complete_guac_instructions(guac_buf)
+                    if complete_batch:
+                        if "5.error," in complete_batch:
+                            logger.warning(
+                                "guacd reportou erro para TV %s: %s",
+                                tv_row.get("slug"),
+                                complete_batch[:200],
+                            )
+                        await send_ws_text(complete_batch)
 
         done, pending = await asyncio.wait(
             [
-                asyncio.create_task(browser_to_guacd()),
-                asyncio.create_task(guacd_to_browser(buf)),
+                asyncio.create_task(browser_to_guacd(), name="browser_to_guacd"),
+                asyncio.create_task(guacd_to_browser(buf), name="guacd_to_browser"),
             ],
             return_when=asyncio.FIRST_COMPLETED,
         )
+        for task in done:
+            exc = task.exception()
+            if exc is not None:
+                logger.warning(
+                    "Tarefa '%s' do túnel Guacamole da TV %s encerrou com exceção: %s",
+                    task.get_name(),
+                    tv_row.get("slug"),
+                    exc,
+                )
         for task in pending:
             task.cancel()
         try:
-            await websocket.send_text(encode_guac_instruction("disconnect"))
+            await send_ws_text(encode_guac_instruction("disconnect"))
             await websocket.close()
         except Exception:
             pass
