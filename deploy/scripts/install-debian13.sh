@@ -23,9 +23,14 @@ fi
 
 echo "[2/8] Instalando dependências de sistema (sem tocar em xrdp)..."
 apt-get update
+if apt-cache show freerdp2-shadow-x11 >/dev/null 2>&1; then
+    SHADOW_PKG="freerdp2-shadow-x11"
+else
+    SHADOW_PKG="freerdp3-shadow-x11"
+fi
 apt-get install -y --no-install-recommends \
     python3 python3-venv python3-pip sqlite3 \
-    freerdp3-shadow-x11 iproute2 procps sudo ca-certificates curl
+    "${SHADOW_PKG}" iproute2 procps sudo ca-certificates curl
 
 echo "[3/8] Criando usuário dedicado sem privilégios 'tv-panel'..."
 if ! id -u tv-panel >/dev/null 2>&1; then
@@ -51,14 +56,16 @@ python3 -m venv "${INSTALL_DIR}/venv"
 "${INSTALL_DIR}/venv/bin/pip" install -r "${INSTALL_DIR}/backend/requirements.txt"
 
 chown -R tv-panel:tv-panel "${DATA_DIR}"
-chmod 0755 "${DATA_DIR}"
+chmod 0775 "${DATA_DIR}"
 
 sudo -u tv-panel TV_PANEL_DB_PATH="${DATA_DIR}/tv_panel.db" \
     "${INSTALL_DIR}/venv/bin/python" -m app.cli migrate --PYTHONPATH "${INSTALL_DIR}/backend" 2>/dev/null || \
     (cd "${INSTALL_DIR}/backend" && sudo -u tv-panel TV_PANEL_DB_PATH="${DATA_DIR}/tv_panel.db" "${INSTALL_DIR}/venv/bin/python" -m app.cli migrate)
 
-# Permite leitura somente-leitura do SQLite pelas contas das TVs no wrapper de inicialização
-chmod 0644 "${DATA_DIR}/tv_panel.db"
+# Permite escrita pelo tv-panel e leitura somente-leitura do SQLite pelas contas das TVs
+chown -R tv-panel:tv-panel "${DATA_DIR}"
+chmod 0775 "${DATA_DIR}"
+chmod 0664 "${DATA_DIR}/tv_panel.db"
 
 echo "[6/8] Instalando regra sudoers restrita e unidades systemd..."
 install -m 0440 "${SRC_ROOT}/deploy/sudoers/tv-panel-admin" /etc/sudoers.d/tv-panel-admin

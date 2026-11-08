@@ -117,15 +117,35 @@ if [[ -n "${DETECTED_XAUTH}" && -r "${DETECTED_XAUTH}" ]]; then
     export XAUTHORITY="${DETECTED_XAUTH}"
 fi
 
-# 5. Monta argumentos fixos do freerdp-shadow-cli3
-SHADOW_BIN="/usr/bin/freerdp-shadow-cli3"
-if [[ ! -x "${SHADOW_BIN}" ]]; then
-    echo "[ERRO] Binário ${SHADOW_BIN} não encontrado. Instale o pacote freerdp3-shadow-x11." >&2
+# 5. Detecta automaticamente o binário do FreeRDP Shadow (Ubuntu 24.04 LTS usa freerdp-shadow-cli / FreeRDP 2;
+# Debian 13 usa freerdp-shadow-cli3 / FreeRDP 3)
+SHADOW_BIN=""
+IS_FREERDP3="0"
+
+if [[ -x "/usr/bin/freerdp-shadow-cli" ]]; then
+    SHADOW_BIN="/usr/bin/freerdp-shadow-cli"
+    if "${SHADOW_BIN}" --version 2>&1 | grep -q "version 3\."; then
+        IS_FREERDP3="1"
+    fi
+elif [[ -x "/usr/bin/freerdp-shadow-cli3" ]]; then
+    SHADOW_BIN="/usr/bin/freerdp-shadow-cli3"
+    IS_FREERDP3="1"
+else
+    echo "[ERRO] Binário freerdp-shadow-cli / freerdp-shadow-cli3 não encontrado. Instale freerdp2-shadow-x11 (Ubuntu 24.04) ou freerdp3-shadow-x11 (Debian 13)." >&2
     exit 1
 fi
 
-# Garante diretório de certificado TLS local do FreeRDP 3 no HOME do usuário da TV
-mkdir -p "${HOME}/.config/freerdp/server" 2>/dev/null || true
+# Garante diretório e certificado TLS local do FreeRDP no HOME do usuário da TV
+CERT_DIR="${HOME}/.config/freerdp/server"
+mkdir -p "${CERT_DIR}" 2>/dev/null || true
+if [[ ! -s "${CERT_DIR}/shadow.crt" || ! -s "${CERT_DIR}/shadow.key" ]]; then
+    if command -v openssl >/dev/null 2>&1; then
+        openssl req -x509 -nodes -newkey rsa:2048 \
+            -keyout "${CERT_DIR}/shadow.key" \
+            -out "${CERT_DIR}/shadow.crt" \
+            -days 3650 -subj "/CN=127.0.0.1" >/dev/null 2>&1 || true
+    fi
+fi
 
 ARGS=(
     "/port:${LOCAL_PORT}"
@@ -140,12 +160,19 @@ else
     ARGS+=("-auth")
 fi
 
-# No FreeRDP 3.15 (Debian 13), /sec:rdp em 127.0.0.1 desativa a criptografia RDP ("Turning off encryption for local peer")
-# e causa erro BIO_read no guacd. Usando TLS padrão do FreeRDP 3 (ou /sec:tls), o handshake com guacd funciona sem queda.
-case "${SEC_MODE}" in
-    nla) ARGS+=("/sec:nla") ;;
-    tls|rdp|*) ARGS+=("/sec:tls") ;;
-esac
+# No FreeRDP 2 (Ubuntu 24.04 LTS), /sec:rdp funciona nativamente em 127.0.0.1 sem exigir certificado X.509 manual.
+# No FreeRDP 3 (Debian 13), /sec:rdp em 127.0.0.1 desativa criptografia e exige /sec:tls.
+if [[ "${IS_FREERDP3}" == "1" ]]; then
+    case "${SEC_MODE}" in
+        nla) ARGS+=("/sec:nla") ;;
+        tls|rdp|*) ARGS+=("/sec:tls") ;;
+    esac
+else
+    case "${SEC_MODE}" in
+        nla) ARGS+=("/sec:nla") ;;
+        tls|rdp|*) ARGS+=("/sec:rdp") ;;
+    esac
+fi
 
 if [[ "${GFX_ENABLED}" == "1" ]]; then
     ARGS+=("-gfx")
