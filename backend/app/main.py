@@ -642,6 +642,7 @@ async def tv_guacamole_websocket(
         runtime = await asyncio.to_thread(inspect_tv_runtime, tv_dict)
         if not tv_dict["enabled"] or runtime.overall_status != "online":
             await websocket.accept(subprotocol="guacamole")
+            await websocket.send_text(encode_guac_instruction("", "00000000-0000-0000-0000-000000000000"))
             await websocket.send_text(
                 encode_guac_instruction(
                     "error",
@@ -650,7 +651,8 @@ async def tv_guacamole_websocket(
                     "519",
                 )
             )
-            await websocket.close(code=1011)
+            await websocket.send_text(encode_guac_instruction("disconnect"))
+            await websocket.close()
             return
 
         actor_username = str(sess["username"])

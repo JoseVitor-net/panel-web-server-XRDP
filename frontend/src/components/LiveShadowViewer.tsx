@@ -9,11 +9,28 @@ interface LiveShadowViewerProps {
   onStateUpdated: () => void;
 }
 
-type TunnelPhase =
-  | "connecting"
-  | "connected"
-  | "disconnected"
-  | "error";
+type TunnelPhase = "connecting" | "connected" | "disconnected" | "error";
+
+function formatGuacStatusMessage(code: number, rawMessage?: string): string {
+  if (rawMessage && rawMessage.trim().length > 0) {
+    const msg = rawMessage.trim();
+    if (msg.toLowerCase().includes("upstream")) {
+      return `O daemon guacd não conseguiu negociar a sessão RDP com o FreeRDP Shadow em 127.0.0.1 (código ${code}). Verifique se o serviço Shadow da TV está ativo.`;
+    }
+    return msg;
+  }
+  switch (code) {
+    case 514:
+      return "Gateway local guacd (porta 4822) indisponível. Verifique se o container tv-panel-guacd está em execução.";
+    case 519:
+    case 520:
+      return "O serviço FreeRDP Shadow local não respondeu na porta de loopback configurada ou recusou o handshake.";
+    case 523:
+      return "Conflito de sessão: outra conexão impediu o acesso ao listener Shadow.";
+    default:
+      return `Não foi possível estabelecer ou manter o túnel de vídeo Guacamole (código ${code}).`;
+  }
+}
 
 const LiveShadowViewerComponent: React.FC<LiveShadowViewerProps> = ({
   tv,
@@ -42,6 +59,7 @@ const LiveShadowViewerComponent: React.FC<LiveShadowViewerProps> = ({
   fitToScreenRef.current = fitToScreen;
   const rafMouseRef = useRef<number | null>(null);
   const pendingMouseStateRef = useRef<MouseState | null>(null);
+  const hasSpecificErrorRef = useRef<boolean>(false);
 
   const updateScale = useCallback(
     (explicitW?: number, explicitH?: number) => {
@@ -61,8 +79,8 @@ const LiveShadowViewerComponent: React.FC<LiveShadowViewerProps> = ({
       }
 
       if (viewport.clientWidth <= 0 || viewport.clientHeight <= 0) return;
-      const padW = Math.max(320, viewport.clientWidth - 16);
-      const padH = Math.max(240, viewport.clientHeight - 16);
+      const padW = Math.max(320, viewport.clientWidth - 24);
+      const padH = Math.max(240, viewport.clientHeight - 24);
       const scaleX = padW / w;
       const scaleY = padH / h;
       const nextScale = Math.min(scaleX, scaleY, 1.35);
@@ -99,6 +117,7 @@ const LiveShadowViewerComponent: React.FC<LiveShadowViewerProps> = ({
   }, []);
 
   useEffect(() => {
+    hasSpecificErrorRef.current = false;
     setPhase("connecting");
     setErrorMessage(null);
 
@@ -121,7 +140,7 @@ const LiveShadowViewerComponent: React.FC<LiveShadowViewerProps> = ({
     };
 
     client.onstatechange = (state: number) => {
-      // Estados Guacamole.Client: 0=IDLE, 1=CONNECTING, 2=WAITING, 3=CONNECTED, 4=DISCONNECTING, 5=DISCONNECTED
+      // 0=IDLE, 1=CONNECTING, 2=WAITING, 3=CONNECTED, 4=DISCONNECTING, 5=DISCONNECTED
       if (state === 3) {
         setPhase("connected");
         updateScale();
@@ -133,15 +152,13 @@ const LiveShadowViewerComponent: React.FC<LiveShadowViewerProps> = ({
     };
 
     client.onerror = (statusObj: { code: number; message?: string }) => {
+      hasSpecificErrorRef.current = true;
       setPhase("error");
-      setErrorMessage(
-        statusObj.message ||
-          `Falha no túnel RDP Shadow (código ${statusObj.code}). Verifique se o serviço guacd e o Shadow da TV estão ativos.`
-      );
+      setErrorMessage(formatGuacStatusMessage(statusObj.code, statusObj.message));
     };
 
     tunnel.onstatechange = (state: number) => {
-      // Estados Guacamole.Tunnel: 0=CONNECTING, 1=OPEN, 2=CLOSED
+      // 0=CONNECTING, 1=OPEN, 2=CLOSED
       if (state === 2) {
         setPhase((prev) => (prev === "error" ? "error" : "disconnected"));
         onStateUpdatedRef.current();
@@ -149,22 +166,20 @@ const LiveShadowViewerComponent: React.FC<LiveShadowViewerProps> = ({
     };
 
     tunnel.onerror = (statusObj: { code: number; message?: string }) => {
+      if (hasSpecificErrorRef.current) {
+        return;
+      }
       setPhase("error");
-      setErrorMessage(
-        statusObj.message ||
-          `Não foi possível estabelecer o túnel WebSocket com o gateway Guacamole (código ${statusObj.code}).`
-      );
+      setErrorMessage(formatGuacStatusMessage(statusObj.code, statusObj.message));
     };
 
-    // Controle de mouse com compensação de escala e throttling via requestAnimationFrame
-    // para movimentos puros (evita saturar o WebSocket em mouses de 1000Hz)
     const mouse = new Guacamole.Mouse(displayEl);
     const scaleMouseState = (mouseState: MouseState): MouseState => {
       const s = scaleRef.current || 1;
       return {
         ...mouseState,
-        x: Math.round(mouseState.x / s),
-        y: Math.round(mouseState.y / s),
+        x: Math.max(0, Math.round(mouseState.x / s)),
+        y: Math.max(0, Math.round(mouseState.y / s)),
       };
     };
 
@@ -194,7 +209,6 @@ const LiveShadowViewerComponent: React.FC<LiveShadowViewerProps> = ({
     mouse.onmouseup = sendImmediateMouse;
     mouse.onmousemove = sendThrottledMove;
 
-    // Controle de teclado
     const keyboard = new Guacamole.Keyboard(window.document);
     keyboardRef.current = keyboard;
     keyboard.onkeydown = (keysym: number) => {
@@ -245,7 +259,7 @@ const LiveShadowViewerComponent: React.FC<LiveShadowViewerProps> = ({
         await container.requestFullscreen();
         setIsFullscreen(true);
       } catch {
-        // navegador bloqueou fullscreen
+        // bloqueado pelo navegador
       }
     } else {
       await document.exitFullscreen();
@@ -276,18 +290,38 @@ const LiveShadowViewerComponent: React.FC<LiveShadowViewerProps> = ({
         {!compactToolbar ? (
           <header className="viewer-toolbar">
             <div className="viewer-title-group">
-              <span className={`phase-dot phase-${phase}`} />
-              <div>
+              <div className={`studio-tally studio-tally-${phase}`}>
+                <span className="studio-tally-dot" />
+                <span>
+                  {phase === "connected"
+                    ? "AO VIVO"
+                    : phase === "connecting"
+                    ? "SINCRONIZANDO"
+                    : phase === "error"
+                    ? "FALHA DE SINAL"
+                    : "PAUSADO"}
+                </span>
+              </div>
+
+              <div className="viewer-meta-block">
                 <div className="viewer-title-line">
                   <h2>{tv.name}</h2>
-                  <span className="mono-badge">{tv.slug}</span>
+                  <span className="mono-badge">{tv.slug.toUpperCase()}</span>
                   <span className="viewer-res-chip">{resolutionLabel}</span>
                 </div>
                 <p className="viewer-subtitle">
-                  Sessão XFCE: <strong>{tv.unix_user}</strong> (
-                  {tv.runtime.detected_display || "display ativo"}) • Loopback:{" "}
-                  <code>127.0.0.1:{tv.local_port}</code> • Desconectar a visão{" "}
-                  <strong>não encerra</strong> o XFCE da TV
+                  <span>
+                    Sessão XFCE: <strong>{tv.unix_user}</strong> (
+                    {tv.runtime.detected_display || ":10.0"})
+                  </span>
+                  <span className="meta-sep">•</span>
+                  <span>
+                    Loopback: <code>127.0.0.1:{tv.local_port}</code>
+                  </span>
+                  <span className="meta-sep">•</span>
+                  <span className="safe-disconnect-hint">
+                    Fechar a visão preserva a TV ligada
+                  </span>
                 </p>
               </div>
             </div>
@@ -295,75 +329,98 @@ const LiveShadowViewerComponent: React.FC<LiveShadowViewerProps> = ({
             <div className="viewer-actions">
               <button
                 type="button"
-                className={`btn btn-sm ${
-                  keyboardEnabled ? "btn-active-toggle" : "btn-secondary"
+                className={`hud-btn ${
+                  keyboardEnabled ? "hud-btn-active" : ""
                 }`}
                 onClick={() => setKeyboardEnabled((v) => !v)}
-                title="Ativa ou pausa o envio de teclas para a sessão remota"
+                title="Ativar ou bloquear o envio de teclas para a TV"
               >
-                {keyboardEnabled ? "⌨ Teclado: Ativo" : "⌨ Teclado: Pausado"}
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="2" y="4" width="20" height="16" rx="2" />
+                  <path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10" />
+                </svg>
+                <span>{keyboardEnabled ? "Teclado Ativo" : "Teclado Bloqueado"}</span>
               </button>
 
               <button
                 type="button"
-                className="btn btn-secondary btn-sm"
+                className="hud-btn"
                 onClick={() => setFitToScreen((v) => !v)}
-                title="Alterna entre ajustar automaticamente à janela ou escala 100%"
+                title="Alternar entre ajustar automaticamente à janela ou escala real 1:1"
               >
-                {fitToScreen ? "⤢ Ajustado à Tela" : "1:1 Escala Real"}
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+                </svg>
+                <span>{fitToScreen ? "Ajustado à Tela" : "Escala 1:1"}</span>
               </button>
 
               <button
                 type="button"
-                className="btn btn-secondary btn-sm"
+                className="hud-btn"
                 onClick={handleToggleFullscreen}
+                title="Alternar modo Tela Cheia"
               >
-                {isFullscreen ? "Sair da Tela Cheia" : "⛶ Tela Cheia"}
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
+                </svg>
+                <span>{isFullscreen ? "Sair Tela Cheia" : "Tela Cheia"}</span>
               </button>
 
               <button
                 type="button"
-                className="btn btn-secondary btn-sm"
+                className="hud-btn"
                 onClick={() => setCompactToolbar(true)}
-                title="Recolher barra superior para ampliar a área útil"
+                title="Modo Cinema (recolher barra superior)"
               >
-                ▲ Ocultar Barra
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="m18 15-6-6-6 6" />
+                </svg>
+                <span>Modo Cinema</span>
               </button>
 
               <button
                 type="button"
-                className="btn btn-secondary btn-sm"
+                className="hud-btn"
                 onClick={handleReconnect}
+                title="Reiniciar apenas o túnel de vídeo no navegador"
               >
-                ↻ Reconectar
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                  <path d="M3 3v5h5" />
+                </svg>
+                <span>Reconectar</span>
               </button>
 
               <button
                 type="button"
-                className="btn btn-danger btn-sm"
+                className="hud-btn hud-btn-danger"
                 onClick={handleDisconnectAndClose}
               >
-                ✕ Fechar Visão
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M18 6 6 18M6 6l12 12" />
+                </svg>
+                <span>Fechar Visão</span>
               </button>
             </div>
           </header>
         ) : (
           <div className="viewer-floating-pill">
             <span className={`phase-dot phase-${phase}`} />
-            <strong>{tv.slug.toUpperCase()}</strong>
+            <strong>{tv.name}</strong>
+            <span className="mono-badge">{resolutionLabel}</span>
             <button
               type="button"
-              className="btn btn-secondary btn-xs"
+              className="hud-btn hud-btn-xs"
               onClick={() => setCompactToolbar(false)}
             >
-              ▼ Mostrar Barra
+              Expandir Barra
             </button>
             <button
               type="button"
-              className="btn btn-danger btn-xs"
+              className="hud-btn hud-btn-danger hud-btn-xs"
               onClick={handleDisconnectAndClose}
             >
-              ✕ Sair
+              Fechar
             </button>
           </div>
         )}
@@ -372,9 +429,9 @@ const LiveShadowViewerComponent: React.FC<LiveShadowViewerProps> = ({
           {phase === "connecting" && (
             <div className="viewer-status-banner">
               <div className="spinner" />
-              <h3>Conectando à sessão gráfica da {tv.name}</h3>
+              <h3>Sincronizando sinal de vídeo da {tv.name}</h3>
               <p>
-                Anexando via <code>guacd</code> ao FreeRDP Shadow em{" "}
+                Negociando stream Guacamole com o FreeRDP Shadow em{" "}
                 <code>127.0.0.1:{tv.local_port}</code> ({tv.unix_user})...
               </p>
             </div>
@@ -382,7 +439,14 @@ const LiveShadowViewerComponent: React.FC<LiveShadowViewerProps> = ({
 
           {phase === "error" && (
             <div className="viewer-status-banner viewer-error-banner">
-              <h3>Não foi possível abrir o espelhamento ao vivo</h3>
+              <div className="banner-icon-circle banner-icon-danger">
+                <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+              </div>
+              <h3>Sinal de espelhamento indisponível</h3>
               <p>{errorMessage}</p>
               <div className="banner-actions">
                 <button
@@ -390,7 +454,7 @@ const LiveShadowViewerComponent: React.FC<LiveShadowViewerProps> = ({
                   className="btn btn-primary"
                   onClick={handleReconnect}
                 >
-                  ↻ Tentar Novamente
+                  Tentar Novamente
                 </button>
                 <button
                   type="button"
@@ -405,10 +469,17 @@ const LiveShadowViewerComponent: React.FC<LiveShadowViewerProps> = ({
 
           {phase === "disconnected" && (
             <div className="viewer-status-banner">
-              <h3>Visualização encerrada</h3>
+              <div className="banner-icon-circle">
+                <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="2" y="3" width="20" height="14" rx="2" />
+                  <line x1="8" y1="21" x2="16" y2="21" />
+                  <line x1="12" y1="17" x2="12" y2="21" />
+                </svg>
+              </div>
+              <h3>Transmissão encerrada</h3>
               <p>
-                O túnel do navegador foi desconectado. A sessão gráfica XFCE na
-                TV permanece ativa e intacta.
+                A conexão do navegador foi fechada. A sessão gráfica XFCE na TV
+                permanece ligada e operando normalmente.
               </p>
               <div className="banner-actions">
                 <button
@@ -416,14 +487,14 @@ const LiveShadowViewerComponent: React.FC<LiveShadowViewerProps> = ({
                   className="btn btn-primary"
                   onClick={handleReconnect}
                 >
-                  ↻ Reconectar Agora
+                  Reconectar Agora
                 </button>
                 <button
                   type="button"
                   className="btn btn-secondary"
                   onClick={handleDisconnectAndClose}
                 >
-                  Fechar
+                  Voltar ao Painel
                 </button>
               </div>
             </div>

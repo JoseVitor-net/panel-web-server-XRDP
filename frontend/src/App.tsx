@@ -2,101 +2,83 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "./api";
 import { LiveShadowViewer } from "./components/LiveShadowViewer";
 import {
+  AdminSession,
   AuditLogItem,
-  AuthSession,
-  OverallStatus,
-  ShadowServiceState,
+  OverallTVStatus,
   TVFormPayload,
   TVItem,
-  ViewerConnectionState,
-  XfceSessionState,
 } from "./types";
-
-function formatDateTimePtBr(isoString: string): string {
-  try {
-    const dt = new Date(isoString);
-    if (Number.isNaN(dt.getTime())) return isoString;
-    return dt.toLocaleString("pt-BR", {
-      dateStyle: "short",
-      timeStyle: "medium",
-    });
-  } catch {
-    return isoString;
-  }
-}
-
-function labelOverallStatus(status: OverallStatus): string {
-  switch (status) {
-    case "online":
-      return "Online • Pronta";
-    case "degraded":
-      return "Atenção / Parcial";
-    case "offline":
-      return "Offline";
-    case "disabled":
-      return "Desativada";
-    case "unknown":
-    default:
-      return "Estado Desconhecido";
-  }
-}
-
-function labelXfceState(state: XfceSessionState, display: string | null): string {
-  switch (state) {
-    case "active":
-      return display ? `Ativa (${display})` : "Ativa";
-    case "inactive":
-      return "Sem Login Gráfico";
-    case "unknown":
-    default:
-      return "Desconhecido";
-  }
-}
-
-function labelShadowState(state: ShadowServiceState, port: number): string {
-  switch (state) {
-    case "available":
-      return `Ouvindo 127.0.0.1:${port}`;
-    case "unavailable":
-      return "Parado / Indisponível";
-    case "conflict":
-      return `Conflito na Porta ${port}`;
-    case "starting":
-      return "Iniciando Serviço...";
-    case "error":
-      return "Falha no Systemd";
-    case "unknown":
-    default:
-      return "Desconhecido";
-  }
-}
-
-function labelViewerState(state: ViewerConnectionState, count: number): string {
-  switch (state) {
-    case "connected":
-      return `Em Uso (${count} conectado${count > 1 ? "s" : ""})`;
-    case "idle":
-      return "Livre para Acesso";
-    case "unknown":
-    default:
-      return "Desconhecido";
-  }
-}
 
 const INITIAL_FORM: TVFormPayload = {
   slug: "",
   name: "",
-  location: "",
   unix_user: "",
   local_port: 3394,
-  display_number: null,
+  sec_mode: "tls",
   gfx_enabled: true,
   server_side_cursor: true,
-  sec_mode: "tls",
   shadow_auth_enabled: false,
   enabled: true,
   notes: "",
 };
+
+function statusLabel(status: OverallTVStatus): string {
+  switch (status) {
+    case "online":
+      return "Sinal Ativo";
+    case "session_inactive":
+      return "Sem Sessão XFCE";
+    case "shadow_unavailable":
+      return "Shadow Parado";
+    case "disabled":
+      return "Desabilitada";
+    case "error":
+      return "Conflito / Erro";
+    case "unknown":
+    default:
+      return "Não Verificado";
+  }
+}
+
+function xfceStateText(state: TVItem["runtime"]["xfce_session_state"]): string {
+  switch (state) {
+    case "active":
+      return "Ativa";
+    case "inactive":
+      return "Inativa";
+    default:
+      return "Indefinida";
+  }
+}
+
+function shadowStateText(
+  state: TVItem["runtime"]["shadow_service_state"]
+): string {
+  switch (state) {
+    case "available":
+      return "Escutando";
+    case "unavailable":
+      return "Indisponível";
+    case "port_conflict":
+      return "Conflito Porta";
+    default:
+      return "Indefinido";
+  }
+}
+
+function viewerStateText(
+  state: TVItem["runtime"]["viewer_connection_state"],
+  count: number
+): string {
+  switch (state) {
+    case "connected":
+      return `${count} Operador${count > 1 ? "es" : ""} ao Vivo`;
+    case "idle":
+      return "Aguardando Visão";
+    default:
+      return "Indefinido";
+  }
+}
 
 interface PendingConfirmation {
   title: string;
@@ -105,43 +87,41 @@ interface PendingConfirmation {
   onConfirm: () => Promise<void>;
 }
 
-type StatusFilter = "all" | "online" | "degraded" | "offline";
+type StatusFilter = "all" | "online" | "attention" | "offline";
 
 export const App: React.FC = () => {
-  const [session, setSession] = useState<AuthSession | null>(null);
+  const [session, setSession] = useState<AdminSession | null>(null);
   const [authChecking, setAuthChecking] = useState<boolean>(true);
+
   const [loginUser, setLoginUser] = useState<string>("");
   const [loginPass, setLoginPass] = useState<string>("");
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginLoading, setLoginLoading] = useState<boolean>(false);
 
-  const [activeTab, setActiveTab] = useState<"dashboard" | "admin" | "audit">(
-    "dashboard"
-  );
   const [tvs, setTvs] = useState<TVItem[]>([]);
   const [tvsLoading, setTvsLoading] = useState<boolean>(false);
   const [apiFetchFailed, setApiFetchFailed] = useState<string | null>(null);
-  const [actionFeedback, setActionFeedback] = useState<{
-    type: "success" | "error";
+  const [bannerNotice, setBannerNotice] = useState<{
+    type: "success" | "error" | "info";
     text: string;
   } | null>(null);
 
+  const [activeTab, setActiveTab] = useState<"dashboard" | "admin" | "audit">(
+    "dashboard"
+  );
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [activeViewerTv, setActiveViewerTv] = useState<TVItem | null>(null);
 
-  // Modal de criação/edição rápida de TV
   const [isFormModalOpen, setIsFormModalOpen] = useState<boolean>(false);
   const [editingTvId, setEditingTvId] = useState<number | null>(null);
   const [formData, setFormData] = useState<TVFormPayload>(INITIAL_FORM);
   const [formSubmitting, setFormSubmitting] = useState<boolean>(false);
   const [busyTvId, setBusyTvId] = useState<number | null>(null);
 
-  // Modal de confirmação explícita para ações que interrompam sessão/serviço
   const [pendingConfirmation, setPendingConfirmation] =
     useState<PendingConfirmation | null>(null);
 
-  // Logs de auditoria
   const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>([]);
 
   const loadTVs = useCallback(async (silent = false) => {
@@ -162,7 +142,6 @@ export const App: React.FC = () => {
           ? err.message
           : "Falha ao verificar o estado das TVs na API.";
       setApiFetchFailed(message);
-      // Regra crítica: Nunca mostrar uma sessão como 'online' se a API não conseguiu confirmá-la!
       setTvs((prev) =>
         prev.map((tv) => ({
           ...tv,
@@ -207,7 +186,6 @@ export const App: React.FC = () => {
       });
   }, []);
 
-  // Atualização periódica silenciosa (pausa durante visualização ao vivo para zero lag no vídeo)
   useEffect(() => {
     if (!session) return;
     void loadTVs(false);
@@ -249,7 +227,7 @@ export const App: React.FC = () => {
     try {
       await api.logout(session.csrf_token);
     } catch {
-      // prossegue limpando estado local
+      // limpa estado local
     }
     setSession(null);
     setActiveViewerTv(null);
@@ -259,46 +237,47 @@ export const App: React.FC = () => {
     setEditingTvId(null);
     const maxPort = tvs.reduce(
       (acc, item) => Math.max(acc, item.local_port),
-      3393
+      3390
     );
+    const nextNum = tvs.length + 1;
+    const padded = String(nextNum).padStart(2, "0");
     setFormData({
       ...INITIAL_FORM,
+      slug: `tv${padded}`,
+      name: `TV ${padded}`,
+      unix_user: `tv${padded}`,
       local_port: Math.min(3499, maxPort + 1),
     });
-    setActionFeedback(null);
     setIsFormModalOpen(true);
   };
 
-  const handleStartEdit = (tv: TVItem) => {
+  const handleOpenEditModal = (tv: TVItem) => {
     setEditingTvId(tv.id);
     setFormData({
       slug: tv.slug,
       name: tv.name,
-      location: tv.location,
       unix_user: tv.unix_user,
       local_port: tv.local_port,
-      display_number: tv.display_number,
+      sec_mode: tv.sec_mode,
       gfx_enabled: tv.gfx_enabled,
       server_side_cursor: tv.server_side_cursor,
-      sec_mode: tv.sec_mode,
       shadow_auth_enabled: tv.shadow_auth_enabled,
       enabled: tv.enabled,
       notes: tv.notes,
     });
-    setActionFeedback(null);
     setIsFormModalOpen(true);
   };
 
-  const executeSaveTv = async (confirmDisruption: boolean) => {
+  const executeSaveForm = async (confirmDisruption: boolean) => {
     if (!session) return;
     setFormSubmitting(true);
-    setActionFeedback(null);
+    setBannerNotice(null);
     try {
       if (editingTvId === null) {
         await api.createTV(formData, session.csrf_token);
-        setActionFeedback({
+        setBannerNotice({
           type: "success",
-          text: `TV '${formData.name}' (${formData.slug}) cadastrada com sucesso na porta 127.0.0.1:${formData.local_port}.`,
+          text: `TV '${formData.name}' adicionada ao inventário.`,
         });
       } else {
         await api.updateTV(
@@ -306,35 +285,34 @@ export const App: React.FC = () => {
           { ...formData, confirm_disruption: confirmDisruption },
           session.csrf_token
         );
-        setActionFeedback({
+        setBannerNotice({
           type: "success",
-          text: `Configuração da TV '${formData.name}' salva com sucesso.`,
+          text: `Configurações da '${formData.name}' salvas com sucesso.`,
         });
       }
       setIsFormModalOpen(false);
-      await loadTVs(true);
+      await loadTVs(false);
     } catch (err) {
-      if (
-        err instanceof ApiError &&
-        err.status === 409 &&
-        !confirmDisruption &&
-        editingTvId !== null
-      ) {
+      if (err instanceof ApiError && err.status === 409 && editingTvId !== null) {
         setPendingConfirmation({
-          title: "Confirmar alteração com impacto na sessão",
-          description: err.message,
-          confirmLabel: "Confirmar e Salvar Alterações",
+          title: "Confirmar alteração com sessão ativa",
+          description:
+            "Esta alteração modifica parâmetros de porta ou usuário em uma TV com espelhamento ou serviço ativo. Deseja prosseguir?",
+          confirmLabel: "Confirmar e Aplicar",
           onConfirm: async () => {
             setPendingConfirmation(null);
-            await executeSaveTv(true);
+            await executeSaveForm(true);
           },
         });
-        return;
+      } else {
+        setBannerNotice({
+          type: "error",
+          text:
+            err instanceof Error
+              ? err.message
+              : "Erro ao salvar configurações da TV.",
+        });
       }
-      setActionFeedback({
-        type: "error",
-        text: err instanceof Error ? err.message : "Erro ao salvar TV.",
-      });
     } finally {
       setFormSubmitting(false);
     }
@@ -342,70 +320,90 @@ export const App: React.FC = () => {
 
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    await executeSaveTv(false);
+    await executeSaveForm(false);
+  };
+
+  const executeServiceAction = async (
+    tv: TVItem,
+    action: "start" | "stop" | "restart",
+    confirmDisruption: boolean
+  ) => {
+    if (!session) return;
+    setBusyTvId(tv.id);
+    setBannerNotice(null);
+    try {
+      const updated = await api.serviceAction(
+        tv.id,
+        action,
+        confirmDisruption,
+        session.csrf_token
+      );
+      setTvs((prev) =>
+        prev.map((item) => (item.id === updated.id ? updated : item))
+      );
+      setBannerNotice({
+        type: "info",
+        text: `Comando '${action.toUpperCase()}' aplicado em ${updated.runtime.systemd_unit}.`,
+      });
+    } catch (err) {
+      setBannerNotice({
+        type: "error",
+        text:
+          err instanceof Error
+            ? err.message
+            : `Erro ao executar ${action} no serviço Shadow.`,
+      });
+    } finally {
+      setBusyTvId(null);
+    }
   };
 
   const triggerServiceAction = (
     tv: TVItem,
     action: "start" | "stop" | "restart"
   ) => {
-    if (!session) return;
-
-    const executeAction = async (confirmed: boolean) => {
-      setActionFeedback(null);
-      setBusyTvId(tv.id);
-      try {
-        const updated = await api.controlService(
-          tv.id,
-          action,
-          confirmed,
-          session.csrf_token
-        );
-        setTvs((prev) =>
-          prev.map((item) => (item.id === updated.id ? updated : item))
-        );
-        setActionFeedback({
-          type: "success",
-          text: `Ação '${action.toUpperCase()}' concluída para ${tv.name} (${tv.runtime.systemd_unit}).`,
-        });
-      } catch (err) {
-        setActionFeedback({
-          type: "error",
-          text:
-            err instanceof Error
-              ? err.message
-              : "Falha ao controlar o serviço systemd.",
-        });
-      } finally {
-        setBusyTvId(null);
-      }
-    };
-
     if (
       action === "stop" ||
       action === "restart" ||
       tv.runtime.viewer_connection_state === "connected"
     ) {
-      const actionLabel =
+      const actionVerb =
         action === "stop"
-          ? "Parar Serviço Shadow"
-          : "Reiniciar Serviço Shadow";
+          ? "Parar"
+          : action === "restart"
+          ? "Reiniciar"
+          : "Iniciar";
       setPendingConfirmation({
-        title: `${actionLabel} — ${tv.name} (${tv.slug})`,
-        description:
-          tv.runtime.viewer_connection_state === "connected"
-            ? `Há um operador conectado à ${tv.name} neste momento. Executar '${action}' interromperá imediatamente o espelhamento no navegador (a sessão gráfica XFCE na TV não será encerrada, e o XRDP na porta 3389 não será afetado). Deseja continuar?`
-            : `Você está prestes a executar '${action}' na unidade ${tv.runtime.systemd_unit} (127.0.0.1:${tv.local_port}). A sessão XFCE local e o XRDP na porta 3389 serão preservados. Confirmar?`,
-        confirmLabel: `Sim, ${action === "stop" ? "Parar" : "Reiniciar"} Shadow`,
+        title: `${actionVerb} ${tv.runtime.systemd_unit}?`,
+        description: `Esta ação afeta apenas o servidor de espelhamento FreeRDP Shadow (${tv.runtime.systemd_unit} na porta 127.0.0.1:${tv.local_port}). A sessão gráfica XFCE na TV (${tv.unix_user}) e o serviço XRDP principal (porta 3389) permanecerão intactos.`,
+        confirmLabel: `Sim, ${actionVerb} Serviço Shadow`,
         onConfirm: async () => {
           setPendingConfirmation(null);
-          await executeAction(true);
+          await executeServiceAction(tv, action, true);
         },
       });
     } else {
-      void executeAction(false);
+      void executeServiceAction(tv, action, false);
     }
   };
+
+  const stats = useMemo(() => {
+    const total = tvs.length;
+    const online = tvs.filter(
+      (t) => t.runtime.overall_status === "online"
+    ).length;
+    const xfceActive = tvs.filter(
+      (t) => t.runtime.xfce_session_state === "active"
+    ).length;
+    const shadowReady = tvs.filter(
+      (t) => t.runtime.shadow_service_state === "available"
+    ).length;
+    const activeViewers = tvs.reduce(
+      (acc, t) => acc + (t.runtime.active_viewers || 0),
+      0
+    );
+    return { total, online, xfceActive, shadowReady, activeViewers };
+  }, [tvs]);
 
   const filteredTvs = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -414,14 +412,17 @@ export const App: React.FC = () => {
         return false;
       }
       if (
-        statusFilter === "degraded" &&
-        tv.runtime.overall_status !== "degraded"
+        statusFilter === "attention" &&
+        tv.runtime.overall_status !== "shadow_unavailable" &&
+        tv.runtime.overall_status !== "error" &&
+        tv.runtime.overall_status !== "unknown"
       ) {
         return false;
       }
       if (
         statusFilter === "offline" &&
-        !["offline", "disabled", "unknown"].includes(tv.runtime.overall_status)
+        tv.runtime.overall_status !== "session_inactive" &&
+        tv.runtime.overall_status !== "disabled"
       ) {
         return false;
       }
@@ -430,17 +431,25 @@ export const App: React.FC = () => {
         tv.name.toLowerCase().includes(q) ||
         tv.slug.toLowerCase().includes(q) ||
         tv.unix_user.toLowerCase().includes(q) ||
-        tv.location.toLowerCase().includes(q) ||
-        String(tv.local_port).includes(q)
+        String(tv.local_port).includes(q) ||
+        (tv.notes && tv.notes.toLowerCase().includes(q))
       );
     });
   }, [tvs, searchQuery, statusFilter]);
+
+  const handleCloseViewer = useCallback(() => {
+    setActiveViewerTv(null);
+  }, []);
+
+  const handleViewerStateUpdated = useCallback(() => {
+    void loadTVs(true);
+  }, [loadTVs]);
 
   if (authChecking) {
     return (
       <div className="centered-screen">
         <div className="spinner" />
-        <p className="muted-label">Carregando Console Operacional...</p>
+        <p className="muted-caption">Inicializando console NOC Display Ops...</p>
       </div>
     );
   }
@@ -448,700 +457,869 @@ export const App: React.FC = () => {
   if (!session) {
     return (
       <div className="login-page">
+        <div className="login-ambient-grid" />
         <div className="login-glow" />
         <div className="login-card">
           <div className="login-header">
-            <span className="security-tag">
-              🔒 HTTPS • Loopback Shadow • Debian 13
-            </span>
-            <h1>Console Operacional de TVs</h1>
+            <div className="login-brand-row">
+              <div className="brand-logo-box">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="2" y="3" width="20" height="14" rx="2" />
+                  <path d="M8 21h8M12 17v4" />
+                  <path d="M7 10h2l2-3 2 6 2-3h2" />
+                </svg>
+              </div>
+              <span className="security-tag">
+                DEBIAN 13 TRIXIE • XRDP SHADOW NOC
+              </span>
+            </div>
+            <h1>NOC Display Operations</h1>
             <p>
-              Administração e espelhamento ao vivo de sessões XFCE existentes via
-              Apache Guacamole (<code>guacd</code>) e FreeRDP 3 Shadow.
+              Console central de monitoramento e espelhamento em tempo real de
+              sessões XFCE via FreeRDP 3 Shadow &amp; Apache Guacamole.
             </p>
           </div>
 
           {loginError && (
             <div className="alert alert-error" role="alert">
-              <span>{loginError}</span>
+              {loginError}
             </div>
           )}
 
           <form onSubmit={handleLoginSubmit} className="login-form">
-            <div className="form-group">
-              <label htmlFor="username">Operador / Administrador</label>
+            <label className="form-field">
+              <span>Operador / Administrador</span>
               <input
-                id="username"
                 type="text"
-                autoComplete="username"
                 required
+                autoComplete="username"
                 value={loginUser}
                 onChange={(e) => setLoginUser(e.target.value)}
                 placeholder="Ex: operador_noc"
               />
-            </div>
+            </label>
 
-            <div className="form-group">
-              <label htmlFor="password">Senha de Acesso</label>
+            <label className="form-field">
+              <span>Credencial de Acesso</span>
               <input
-                id="password"
                 type="password"
-                autoComplete="current-password"
                 required
+                autoComplete="current-password"
                 value={loginPass}
                 onChange={(e) => setLoginPass(e.target.value)}
-                placeholder="••••••••••••"
+                placeholder="••••••••••••••••"
               />
-            </div>
+            </label>
 
             <button
               type="submit"
               className="btn btn-primary btn-block btn-lg"
               disabled={loginLoading}
             >
-              {loginLoading ? "Autenticando..." : "Acessar Painel de Controle"}
+              {loginLoading ? "Autenticando..." : "Acessar Console NOC"}
             </button>
           </form>
 
           <footer className="login-footer">
-            <small>
-              XRDP principal (porta <code>3389</code>) isolado e preservado.
-              Todos os serviços Shadow escutam exclusivamente em{" "}
-              <code>127.0.0.1</code>.
-            </small>
+            <div className="login-arch-pills">
+              <span>XRDP :3389 Isolado</span>
+              <span>Bind 127.0.0.1</span>
+              <span>Sessão Argon2id</span>
+            </div>
           </footer>
         </div>
       </div>
     );
   }
 
-  const onlineCount = tvs.filter(
-    (t) => t.runtime.overall_status === "online"
-  ).length;
-  const xfceActiveCount = tvs.filter(
-    (t) => t.runtime.xfce_session_state === "active"
-  ).length;
-  const shadowAvailableCount = tvs.filter(
-    (t) => t.runtime.shadow_service_state === "available"
-  ).length;
-  const connectedViewersCount = tvs.filter(
-    (t) => t.runtime.viewer_connection_state === "connected"
-  ).length;
-
   return (
-    <div className="app-layout">
-      <header className="top-navbar">
-        <div className="brand-area">
-          <div className="brand-icon">📺</div>
+    <div className="noc-layout">
+      {/* Sidebar Esquerda de Comando */}
+      <aside className="noc-sidebar">
+        <div className="sidebar-brand">
+          <div className="brand-logo-box">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="2" y="3" width="20" height="14" rx="2" />
+              <path d="M8 21h8M12 17v4" />
+              <path d="M7 10h2l2-3 2 6 2-3h2" />
+            </svg>
+          </div>
           <div>
-            <div className="brand-title-row">
-              <h1>NOC • Painel TV Shadow RDP</h1>
-              <span className="live-indicator-chip">
-                <span className="pulse-dot" /> Tempo Real
-              </span>
-            </div>
-            <span className="env-pill">
-              Debian 13 Trixie • XRDP <code>:3389</code> Intacto • Loopback{" "}
-              <code>127.0.0.1</code>
-            </span>
+            <div className="sidebar-title">NOC Display Ops</div>
+            <div className="sidebar-subtitle">XRDP / XFCE Shadow Control</div>
           </div>
         </div>
 
-        <nav className="nav-tabs" aria-label="Navegação principal">
+        <div className="sidebar-section-label">MÓDULOS DE OPERAÇÃO</div>
+        <nav className="sidebar-nav" aria-label="Navegação principal">
           <button
             type="button"
-            className={`nav-tab ${activeTab === "dashboard" ? "active" : ""}`}
+            className={`sidebar-link ${activeTab === "dashboard" ? "active" : ""}`}
             onClick={() => setActiveTab("dashboard")}
           >
-            Monitoramento ao Vivo ({tvs.length})
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.85">
+              <rect x="3" y="3" width="7" height="7" rx="1.5" />
+              <rect x="14" y="3" width="7" height="7" rx="1.5" />
+              <rect x="14" y="14" width="7" height="7" rx="1.5" />
+              <rect x="3" y="14" width="7" height="7" rx="1.5" />
+            </svg>
+            <span>Video Wall ao Vivo</span>
+            <span className="sidebar-badge">
+              {stats.online}/{stats.total}
+            </span>
           </button>
+
           <button
             type="button"
-            className={`nav-tab ${activeTab === "admin" ? "active" : ""}`}
+            className={`sidebar-link ${activeTab === "admin" ? "active" : ""}`}
             onClick={() => setActiveTab("admin")}
           >
-            Inventário & Portas
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.85">
+              <rect x="2" y="4" width="20" height="6" rx="1.5" />
+              <rect x="2" y="14" width="20" height="6" rx="1.5" />
+              <line x1="6" y1="7" x2="6.01" y2="7" />
+              <line x1="6" y1="17" x2="6.01" y2="17" />
+            </svg>
+            <span>Inventário &amp; Systemd</span>
+            <span className="sidebar-badge sidebar-badge-neutral">
+              {stats.total}
+            </span>
           </button>
+
           <button
             type="button"
-            className={`nav-tab ${activeTab === "audit" ? "active" : ""}`}
+            className={`sidebar-link ${activeTab === "audit" ? "active" : ""}`}
             onClick={() => setActiveTab("audit")}
           >
-            Auditoria de Segurança
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.85">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              <path d="m9 12 2 2 4-4" />
+            </svg>
+            <span>Trilha de Auditoria</span>
           </button>
         </nav>
 
-        <div className="user-area">
+        <div className="sidebar-QuickAction">
           <button
             type="button"
-            className="btn btn-primary btn-sm"
+            className="btn btn-primary btn-block"
             onClick={handleOpenCreateModal}
           >
-            + Nova TV
-          </button>
-          <button
-            type="button"
-            className="btn btn-secondary btn-sm"
-            onClick={() => void loadTVs(false)}
-            disabled={tvsLoading}
-            title="Forçar atualização imediata do estado das TVs"
-          >
-            {tvsLoading ? "Atualizando..." : "↻ Sincronizar"}
-          </button>
-          <div className="user-pill">
-            <span className="user-avatar">
-              {session.username.slice(0, 2).toUpperCase()}
-            </span>
-            <span className="user-name">{session.username}</span>
-          </div>
-          <button
-            type="button"
-            className="btn btn-outline-danger btn-sm"
-            onClick={handleLogout}
-          >
-            Sair
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.2">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            <span>Cadastrar Nova TV</span>
           </button>
         </div>
-      </header>
 
-      <main className="main-content">
-        {apiFetchFailed && (
-          <div className="alert alert-warning" role="alert">
-            <div>
-              <strong>Estado Desconhecido:</strong> {apiFetchFailed} Nenhuma
-              sessão é exibida como "Online" enquanto a comunicação com a API
-              não for confirmada.
+        <div className="sidebar-isolation-card">
+          <div className="isolation-header">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="3" y="11" width="18" height="11" rx="2" />
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            </svg>
+            <span>ISOLAMENTO DE ARQUITETURA</span>
+          </div>
+          <ul className="isolation-list">
+            <li>
+              <span className="iso-dot iso-green" />
+              <div>
+                <strong>XRDP Principal (:3389)</strong>
+                <small>Intocado para login das TVs</small>
+              </div>
+            </li>
+            <li>
+              <span className="iso-dot iso-cyan" />
+              <div>
+                <strong>Loopback 127.0.0.1</strong>
+                <small>Portas 3391–3399 isoladas</small>
+              </div>
+            </li>
+            <li>
+              <span className="iso-dot iso-blue" />
+              <div>
+                <strong>Sessão X11 Existente</strong>
+                <small>Anexa sem criar novo desktop</small>
+              </div>
+            </li>
+          </ul>
+        </div>
+
+        <div className="sidebar-footer">
+          <div className="operator-profile">
+            <div className="operator-avatar">
+              {session.username.slice(0, 2).toUpperCase()}
+            </div>
+            <div className="operator-meta">
+              <strong>{session.username}</strong>
+              <span>Operador Autenticado</span>
             </div>
           </div>
-        )}
-
-        {actionFeedback && (
-          <div
-            className={`alert ${
-              actionFeedback.type === "success"
-                ? "alert-success"
-                : "alert-error"
-            }`}
-            role="status"
+          <button
+            type="button"
+            className="btn-icon-only"
+            onClick={handleLogout}
+            title="Encerrar sessão do painel"
           >
-            <span>{actionFeedback.text}</span>
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
+          </button>
+        </div>
+      </aside>
+
+      {/* Área Principal */}
+      <div className="noc-workspace">
+        <header className="workspace-topbar">
+          <div className="topbar-left">
+            <div className="topbar-breadcrumb">
+              <span> Debian 13 Server</span>
+              <span>/</span>
+              <strong>
+                {activeTab === "dashboard"
+                  ? "Video Wall & Monitoramento"
+                  : activeTab === "admin"
+                  ? "Inventário & Controle Systemd"
+                  : "Auditoria & Eventos de Segurança"}
+              </strong>
+            </div>
+            <span className="telemetry-pill">
+              <span className="pulse-dot" />
+              Telemetria em Tempo Real
+            </span>
+          </div>
+
+          <div className="topbar-right">
             <button
               type="button"
-              className="alert-close"
-              onClick={() => setActionFeedback(null)}
+              className="btn btn-secondary btn-sm"
+              onClick={() => void loadTVs(false)}
+              disabled={tvsLoading}
             >
-              ×
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                <path d="M3 3v5h5" />
+              </svg>
+              <span>{tvsLoading ? "Sincronizando..." : "Sincronizar"}</span>
+            </button>
+
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={handleOpenCreateModal}
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.2">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              <span>Nova TV</span>
             </button>
           </div>
-        )}
+        </header>
 
-        {/* KPIs Operacionais Distintos */}
-        <section className="metrics-strip" aria-label="Resumo operacional">
-          <div className="metric-box metric-box-emerald">
-            <div className="metric-top">
-              <span className="metric-label">TVs Prontas (Online)</span>
-              <span className="metric-icon">●</span>
+        <main className="main-content">
+          {apiFetchFailed && (
+            <div className="alert alert-warning" role="alert">
+              <strong>Verificação de Estado Incompleta:</strong> {apiFetchFailed}{" "}
+              Por segurança, nenhuma TV é exibida como <code>online</code> sem
+              confirmação ativa do backend.
             </div>
-            <strong className="metric-value status-text-online">
-              {onlineCount} <small>/ {tvs.length}</small>
-            </strong>
-            <span className="metric-sub">
-              Sessão XFCE + Listener Shadow prontos
-            </span>
-          </div>
+          )}
 
-          <div className="metric-box metric-box-blue">
-            <div className="metric-top">
-              <span className="metric-label">Sessões Gráficas XFCE</span>
-              <span className="metric-icon">🖥</span>
-            </div>
-            <strong className="metric-value">{xfceActiveCount}</strong>
-            <span className="metric-sub">
-              Desktops X11 autenticados nas TVs
-            </span>
-          </div>
-
-          <div className="metric-box metric-box-indigo">
-            <div className="metric-top">
-              <span className="metric-label">Listeners FreeRDP Shadow</span>
-              <span className="metric-icon">⚡</span>
-            </div>
-            <strong className="metric-value">{shadowAvailableCount}</strong>
-            <span className="metric-sub">
-              Portas ativas em <code>127.0.0.1</code>
-            </span>
-          </div>
-
-          <div className="metric-box metric-box-cyan">
-            <div className="metric-top">
-              <span className="metric-label">Operadores Conectados</span>
-              <span className="metric-icon">👁</span>
-            </div>
-            <strong className="metric-value status-text-connected">
-              {connectedViewersCount}
-            </strong>
-            <span className="metric-sub">
-              Espelhamentos ativos no navegador
-            </span>
-          </div>
-        </section>
-
-        {activeTab === "dashboard" && (
-          <>
-            {/* Barra de Busca e Filtros Rápidos */}
-            <div className="toolbar-strip">
-              <div className="filter-pills">
-                <button
-                  type="button"
-                  className={`filter-pill ${
-                    statusFilter === "all" ? "active" : ""
-                  }`}
-                  onClick={() => setStatusFilter("all")}
-                >
-                  Todas ({tvs.length})
-                </button>
-                <button
-                  type="button"
-                  className={`filter-pill ${
-                    statusFilter === "online" ? "active" : ""
-                  }`}
-                  onClick={() => setStatusFilter("online")}
-                >
-                  Online ({onlineCount})
-                </button>
-                <button
-                  type="button"
-                  className={`filter-pill ${
-                    statusFilter === "degraded" ? "active" : ""
-                  }`}
-                  onClick={() => setStatusFilter("degraded")}
-                >
-                  Atenção (
-                  {
-                    tvs.filter((t) => t.runtime.overall_status === "degraded")
-                      .length
-                  }
-                  )
-                </button>
-                <button
-                  type="button"
-                  className={`filter-pill ${
-                    statusFilter === "offline" ? "active" : ""
-                  }`}
-                  onClick={() => setStatusFilter("offline")}
-                >
-                  Offline / Outras (
-                  {
-                    tvs.filter((t) =>
-                      ["offline", "disabled", "unknown"].includes(
-                        t.runtime.overall_status
-                      )
-                    ).length
-                  }
-                  )
-                </button>
-              </div>
-
-              <div className="search-box">
-                <input
-                  type="search"
-                  placeholder="Filtrar por nome, usuário (tv03), local ou porta (3393)..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                />
-              </div>
-            </div>
-
-            {filteredTvs.length === 0 ? (
-              <div className="empty-state-card">
-                <h3>Nenhuma TV encontrada para o filtro selecionado</h3>
-                <p>
-                  Limpe o campo de busca ou cadastre uma nova TV no inventário.
-                </p>
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={() => {
-                    setSearchQuery("");
-                    setStatusFilter("all");
-                  }}
-                >
-                  Mostrar Todas as TVs
-                </button>
-              </div>
-            ) : (
-              <section
-                className="tv-grid"
-                aria-label="Cartões das TVs cadastradas"
+          {bannerNotice && (
+            <div
+              className={`alert alert-${bannerNotice.type}`}
+              role="status"
+              onClick={() => setBannerNotice(null)}
+            >
+              <span>{bannerNotice.text}</span>
+              <button
+                type="button"
+                className="alert-dismiss"
+                aria-label="Fechar aviso"
               >
+                ✕
+              </button>
+            </div>
+          )}
+
+          {/* Faixa de KPIs Executivos */}
+          <section className="kpi-grid" aria-label="Resumo operacional">
+            <div className="kpi-card kpi-card-emerald">
+              <div className="kpi-top">
+                <span className="kpi-label">SINAL PRONTO (ONLINE)</span>
+                <div className="kpi-svg-box kpi-svg-emerald">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
+                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+                  </svg>
+                </div>
+              </div>
+              <div className="kpi-value">
+                {stats.online}
+                <span className="kpi-fraction">/{stats.total}</span>
+              </div>
+              <div className="kpi-sub">
+                TVs prontas para espelhamento imediato
+              </div>
+            </div>
+
+            <div className="kpi-card kpi-card-blue">
+              <div className="kpi-top">
+                <span className="kpi-label">SESSÕES GRÁFICAS XFCE</span>
+                <div className="kpi-svg-box kpi-svg-blue">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
+                    <rect x="2" y="3" width="20" height="14" rx="2" />
+                    <line x1="8" y1="21" x2="16" y2="21" />
+                    <line x1="12" y1="17" x2="12" y2="21" />
+                  </svg>
+                </div>
+              </div>
+              <div className="kpi-value">
+                {stats.xfceActive}
+                <span className="kpi-fraction">/{stats.total}</span>
+              </div>
+              <div className="kpi-sub">
+                Desktops X11 ativos no servidor XRDP
+              </div>
+            </div>
+
+            <div className="kpi-card kpi-card-cyan">
+              <div className="kpi-top">
+                <span className="kpi-label">LISTENERS SHADOW</span>
+                <div className="kpi-svg-box kpi-svg-cyan">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                  </svg>
+                </div>
+              </div>
+              <div className="kpi-value">
+                {stats.shadowReady}
+                <span className="kpi-fraction">/{stats.total}</span>
+              </div>
+              <div className="kpi-sub">
+                Sockets ativos em <code>127.0.0.1:339x</code>
+              </div>
+            </div>
+
+            <div className="kpi-card kpi-card-purple">
+              <div className="kpi-top">
+                <span className="kpi-label">TRANSMISSÕES AO VIVO</span>
+                <div className="kpi-svg-box kpi-svg-purple">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                </div>
+              </div>
+              <div className="kpi-value">{stats.activeViewers}</div>
+              <div className="kpi-sub">
+                Operadores assistindo via WebSocket
+              </div>
+            </div>
+          </section>
+
+          {activeTab === "dashboard" && (
+            <>
+              <section className="filter-toolbar" aria-label="Filtros de TVs">
+                <div className="search-input-wrap">
+                  <svg
+                    className="search-svg"
+                    viewBox="0 0 24 24"
+                    width="16"
+                    height="16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <circle cx="11" cy="11" r="8" />
+                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                  </svg>
+                  <input
+                    type="search"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Filtrar monitor por nome, usuário Unix (tv01, tv02, tv03) ou porta..."
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      className="search-clear"
+                      onClick={() => setSearchQuery("")}
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                <div className="filter-pills">
+                  <button
+                    type="button"
+                    className={`filter-pill ${
+                      statusFilter === "all" ? "active" : ""
+                    }`}
+                    onClick={() => setStatusFilter("all")}
+                  >
+                    Todas ({tvs.length})
+                  </button>
+                  <button
+                    type="button"
+                    className={`filter-pill ${
+                      statusFilter === "online" ? "active" : ""
+                    }`}
+                    onClick={() => setStatusFilter("online")}
+                  >
+                    Sinal Ativo ({stats.online})
+                  </button>
+                  <button
+                    type="button"
+                    className={`filter-pill ${
+                      statusFilter === "attention" ? "active" : ""
+                    }`}
+                    onClick={() => setStatusFilter("attention")}
+                  >
+                    Atenção
+                  </button>
+                  <button
+                    type="button"
+                    className={`filter-pill ${
+                      statusFilter === "offline" ? "active" : ""
+                    }`}
+                    onClick={() => setStatusFilter("offline")}
+                  >
+                    Sem Sessão
+                  </button>
+                </div>
+              </section>
+
+              <section className="tv-grid" aria-label="Video Wall de TVs">
                 {filteredTvs.map((tv) => {
                   const rt = tv.runtime;
-                  const canOpenLive =
-                    tv.enabled &&
-                    rt.overall_status === "online" &&
-                    rt.xfce_session_state === "active" &&
-                    rt.shadow_service_state === "available";
+                  const canWatch = tv.enabled && rt.overall_status === "online";
                   const isBusy = busyTvId === tv.id;
 
                   return (
                     <article
                       key={tv.id}
-                      className={`tv-card tv-card-${rt.overall_status}`}
+                      className={`tv-card status-border-${rt.overall_status}`}
                     >
-                      <header className="tv-card-header">
-                        <div className="tv-header-main">
-                          <div className="tv-card-title-row">
+                      {/* Cabeçalho do Monitor */}
+                      <div className="tv-card-header">
+                        <div className="tv-title-group">
+                          <div className="tv-title-row">
                             <h2>{tv.name}</h2>
-                            <span className="mono-badge">{tv.slug}</span>
+                            <span className="mono-badge">
+                              {tv.slug.toUpperCase()}
+                            </span>
                           </div>
-                          <p className="tv-location">
-                            📍 {tv.location || "Local não informado"}
-                          </p>
+                          <span className="tv-notes">
+                            {tv.notes ||
+                              `Terminal corporativo (${tv.unix_user})`}
+                          </span>
                         </div>
+
                         <span
                           className={`status-pill status-${rt.overall_status}`}
                         >
-                          <span className="status-dot" />
-                          {labelOverallStatus(rt.overall_status)}
+                          <span className="status-pill-dot" />
+                          {statusLabel(rt.overall_status)}
                         </span>
-                      </header>
-
-                      {/* Chips Técnicos Rápidos */}
-                      <div className="tech-chips-row">
-                        <span className="tech-chip">
-                          👤 Usuário: <code>{tv.unix_user}</code>
-                        </span>
-                        <span className="tech-chip">
-                          🔌 Loopback: <code>127.0.0.1:{tv.local_port}</code>
-                        </span>
-                        {rt.detected_display && (
-                          <span className="tech-chip">
-                            🖥 Display: <code>{rt.detected_display}</code>
-                          </span>
-                        )}
                       </div>
 
-                      {/* 3 Indicadores Separados de Estado */}
-                      <div className="indicators-list">
-                        <div className="indicator-row">
-                          <span className="indicator-label">
-                            1. Sessão Gráfica XFCE
+                      {/* Moldura 16:9 de Preview de Monitor */}
+                      <div
+                        className={`monitor-screen monitor-${rt.overall_status}`}
+                        onClick={() => {
+                          if (canWatch) setActiveViewerTv(tv);
+                        }}
+                        role={canWatch ? "button" : undefined}
+                        tabIndex={canWatch ? 0 : undefined}
+                        onKeyDown={(e) => {
+                          if (
+                            canWatch &&
+                            (e.key === "Enter" || e.key === " ")
+                          ) {
+                            e.preventDefault();
+                            setActiveViewerTv(tv);
+                          }
+                        }}
+                      >
+                        <div className="monitor-scanlines" />
+
+                        <div className="monitor-top-hud">
+                          <span className="monitor-chip">
+                            {rt.detected_display
+                              ? `X11 ${rt.detected_display}`
+                              : "X11 OFF"}
                           </span>
-                          <span
-                            className={`indicator-badge xfce-${rt.xfce_session_state}`}
-                          >
-                            {labelXfceState(
-                              rt.xfce_session_state,
-                              rt.detected_display
-                            )}
+                          <span className="monitor-chip">
+                            127.0.0.1:{tv.local_port}
+                          </span>
+                          {rt.viewer_connection_state === "connected" && (
+                            <span className="monitor-live-tally">
+                              ● EM EXIBIÇÃO ({rt.active_viewers})
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="monitor-center">
+                          {canWatch ? (
+                            <div className="monitor-ready-cta">
+                              <div className="play-circle">
+                                <svg
+                                  viewBox="0 0 24 24"
+                                  width="24"
+                                  height="24"
+                                  fill="currentColor"
+                                >
+                                  <polygon points="6 3 20 12 6 21 6 3" />
+                                </svg>
+                              </div>
+                              <strong>Abrir Espelhamento ao Vivo</strong>
+                              <small>
+                                Sessão XFCE ativa (PID {rt.xfce_pid}) •{" "}
+                                {tv.sec_mode.toUpperCase()} 1080p
+                              </small>
+                            </div>
+                          ) : (
+                            <div className="monitor-offline-state">
+                              <svg
+                                viewBox="0 0 24 24"
+                                width="28"
+                                height="28"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="1.6"
+                              >
+                                <rect
+                                  x="2"
+                                  y="3"
+                                  width="20"
+                                  height="14"
+                                  rx="2"
+                                />
+                                <line x1="2" y1="3" x2="22" y2="17" />
+                                <line x1="8" y1="21" x2="16" y2="21" />
+                              </svg>
+                              <strong>{statusLabel(rt.overall_status)}</strong>
+                              <small>{rt.user_message}</small>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="monitor-bottom-hud">
+                          <span>USER: {tv.unix_user}</span>
+                          <span>UNIT: {rt.systemd_unit}</span>
+                        </div>
+                      </div>
+
+                      {/* Grade Técnica de 3 Estados Independentes */}
+                      <div className="telemetry-strip">
+                        <div className="telemetry-cell">
+                          <span className="t-label">1. Sessão XFCE</span>
+                          <span className="t-val">
+                            <span
+                              className={`dot dot-${
+                                rt.xfce_session_state === "active"
+                                  ? "green"
+                                  : rt.xfce_session_state === "inactive"
+                                  ? "gray"
+                                  : "purple"
+                              }`}
+                            />
+                            {xfceStateText(rt.xfce_session_state)}
                           </span>
                         </div>
 
-                        <div className="indicator-row">
-                          <span className="indicator-label">
-                            2. Listener FreeRDP Shadow
-                          </span>
-                          <span
-                            className={`indicator-badge shadow-${rt.shadow_service_state}`}
-                          >
-                            {labelShadowState(
-                              rt.shadow_service_state,
-                              tv.local_port
-                            )}
+                        <div className="telemetry-cell">
+                          <span className="t-label">2. Listener Shadow</span>
+                          <span className="t-val">
+                            <span
+                              className={`dot dot-${
+                                rt.shadow_service_state === "available"
+                                  ? "green"
+                                  : rt.shadow_service_state === "port_conflict"
+                                  ? "red"
+                                  : "amber"
+                              }`}
+                            />
+                            {shadowStateText(rt.shadow_service_state)}
                           </span>
                         </div>
 
-                        <div className="indicator-row">
-                          <span className="indicator-label">
-                            3. Espectador / Controle
-                          </span>
-                          <span
-                            className={`indicator-badge viewer-${rt.viewer_connection_state}`}
-                          >
-                            {labelViewerState(
+                        <div className="telemetry-cell">
+                          <span className="t-label">3. Visualizador</span>
+                          <span className="t-val">
+                            <span
+                              className={`dot dot-${
+                                rt.viewer_connection_state === "connected"
+                                  ? "blue"
+                                  : "gray"
+                              }`}
+                            />
+                            {viewerStateText(
                               rt.viewer_connection_state,
-                              rt.active_viewers_count
+                              rt.active_viewers
                             )}
                           </span>
                         </div>
                       </div>
 
-                      <div className="tv-card-diagnostic">
-                        <p className="diagnostic-msg">{rt.user_message}</p>
-                        <div className="diagnostic-meta">
-                          <span>
-                            Unidade: <code>{rt.systemd_unit}</code> (
-                            {rt.systemd_active_state})
-                          </span>
-                          <span>
-                            Verificado: {formatDateTimePtBr(rt.last_checked_at)}
-                          </span>
-                        </div>
-                      </div>
-
-                      <footer className="tv-card-footer">
+                      {/* Barra de Ações do Cartão */}
+                      <div className="tv-card-footer">
                         <button
                           type="button"
-                          className={`btn ${
-                            canOpenLive ? "btn-primary btn-glow" : "btn-secondary"
-                          } btn-live-open`}
-                          disabled={!canOpenLive}
+                          className="btn btn-primary tv-watch-btn"
+                          disabled={!canWatch}
                           onClick={() => setActiveViewerTv(tv)}
-                          title={
-                            canOpenLive
-                              ? "Abrir espelhamento ao vivo com controle de teclado e mouse"
-                              : "Disponível quando a sessão XFCE está ativa e o Shadow está ouvindo em 127.0.0.1"
-                          }
                         >
-                          ▶ Abrir Tela ao Vivo
+                          <svg
+                            viewBox="0 0 24 24"
+                            width="15"
+                            height="15"
+                            fill="currentColor"
+                          >
+                            <polygon points="5 3 19 12 5 21 5 3" />
+                          </svg>
+                          <span>
+                            {canWatch
+                              ? "Assistir Tela ao Vivo"
+                              : "Indisponível"}
+                          </span>
                         </button>
 
-                        <div className="card-secondary-actions">
-                          {tv.enabled &&
-                            rt.shadow_service_state !== "available" && (
-                              <button
-                                type="button"
-                                className="btn btn-secondary btn-sm"
-                                disabled={isBusy}
-                                onClick={() =>
-                                  triggerServiceAction(tv, "start")
-                                }
-                              >
-                                {isBusy ? "..." : "Iniciar Shadow"}
-                              </button>
-                            )}
-                          {tv.enabled &&
-                            rt.shadow_service_state === "available" && (
-                              <button
-                                type="button"
-                                className="btn btn-warning btn-sm"
-                                disabled={isBusy}
-                                onClick={() =>
-                                  triggerServiceAction(tv, "restart")
-                                }
-                              >
-                                {isBusy ? "..." : "Reiniciar"}
-                              </button>
-                            )}
+                        <div className="service-btn-group">
                           <button
                             type="button"
                             className="btn btn-secondary btn-sm"
-                            onClick={() => handleStartEdit(tv)}
+                            disabled={
+                              isBusy || rt.xfce_session_state !== "active"
+                            }
+                            onClick={() => triggerServiceAction(tv, "start")}
+                            title="Iniciar serviço FreeRDP Shadow"
                           >
-                            ⚙ Configurar
+                            Start
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            disabled={isBusy}
+                            onClick={() => triggerServiceAction(tv, "restart")}
+                            title="Reiniciar serviço FreeRDP Shadow"
+                          >
+                            Restart
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => handleOpenEditModal(tv)}
+                            title="Editar parâmetros da TV"
+                          >
+                            <svg
+                              viewBox="0 0 24 24"
+                              width="14"
+                              height="14"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                            >
+                              <circle cx="12" cy="12" r="3" />
+                              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                            </svg>
                           </button>
                         </div>
-                      </footer>
+                      </div>
                     </article>
                   );
                 })}
               </section>
-            )}
-          </>
-        )}
+            </>
+          )}
 
-        {activeTab === "admin" && (
-          <section className="admin-panel">
-            <div className="panel-header">
-              <div>
-                <h2>Inventário de TVs e Alocação de Portas Loopback</h2>
-                <p className="panel-subtitle">
-                  Cada TV utiliza um usuário Unix exclusivo e uma porta local em{" "}
-                  <code>127.0.0.1</code> (faixa <code>3391–3499</code>). A porta{" "}
-                  <code>3389</code> do XRDP nunca é alterada.
-                </p>
+          {activeTab === "admin" && (
+            <section className="admin-panel">
+              <div className="panel-header">
+                <div>
+                  <h2>Inventário de Terminais &amp; Unidades Systemd</h2>
+                  <p className="panel-subtitle">
+                    Gerenciamento de portas locais (loopback{" "}
+                    <code>127.0.0.1</code>) e serviços{" "}
+                    <code>tv-shadow@&lt;usuario&gt;.service</code>.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={handleOpenCreateModal}
+                >
+                  + Adicionar TV
+                </button>
               </div>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={handleOpenCreateModal}
-              >
-                + Cadastrar Nova TV
-              </button>
-            </div>
 
-            <div className="table-responsive">
-              <table className="admin-table">
-                <thead>
-                  <tr>
-                    <th>TV / Identificador</th>
-                    <th>Usuário Unix</th>
-                    <th>Endpoint Loopback</th>
-                    <th>Sessão XFCE</th>
-                    <th>Serviço Shadow</th>
-                    <th>Flags FreeRDP</th>
-                    <th>Ações</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {tvs.map((tv) => (
-                    <tr key={tv.id}>
-                      <td>
-                        <strong>{tv.name}</strong>{" "}
-                        <span className="mono-badge">{tv.slug}</span>
-                        <div className="sub-cell">{tv.location}</div>
-                      </td>
-                      <td>
-                        <code>{tv.unix_user}</code>
-                      </td>
-                      <td>
-                        <code>127.0.0.1:{tv.local_port}</code>
-                      </td>
-                      <td>
-                        <span
-                          className={`indicator-badge xfce-${tv.runtime.xfce_session_state}`}
-                        >
-                          {labelXfceState(
-                            tv.runtime.xfce_session_state,
-                            tv.runtime.detected_display
-                          )}
-                        </span>
-                      </td>
-                      <td>
-                        <span
-                          className={`indicator-badge shadow-${tv.runtime.shadow_service_state}`}
-                        >
-                          {labelShadowState(
-                            tv.runtime.shadow_service_state,
-                            tv.local_port
-                          )}
-                        </span>
-                      </td>
-                      <td>
-                        <code className="flags-code">
-                          {tv.effective_shadow_flags_preview}
-                        </code>
-                      </td>
-                      <td className="actions-cell">
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-xs"
-                          onClick={() => handleStartEdit(tv)}
-                        >
-                          Editar
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-xs"
-                          onClick={() => triggerServiceAction(tv, "start")}
-                        >
-                          Start
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-warning btn-xs"
-                          onClick={() => triggerServiceAction(tv, "restart")}
-                        >
-                          Restart
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-outline-danger btn-xs"
-                          onClick={() => triggerServiceAction(tv, "stop")}
-                        >
-                          Stop
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        )}
-
-        {activeTab === "audit" && (
-          <section className="admin-panel">
-            <div className="panel-header">
-              <div>
-                <h2>Trilha de Auditoria e Eventos Operacionais</h2>
-                <p className="panel-subtitle">
-                  Registro de logins, conexões ao vivo, alterações de inventário
-                  e controle de unidades systemd (sem exposição de segredos).
-                </p>
-              </div>
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                onClick={() => void loadAuditLogs()}
-              >
-                ↻ Atualizar Logs
-              </button>
-            </div>
-
-            <div className="security-notice-box">
-              <h3>Arquitetura de Isolamento Ativa</h3>
-              <p>
-                • <strong>XRDP Principal Preservado:</strong> O serviço{" "}
-                <code>xrdp</code> na porta <code>*:3389</code> permanece
-                intocado para o login gráfico das TVs.
-                <br />• <strong>Loopback Estrito:</strong> Os serviços{" "}
-                <code>tv-shadow@&lt;usuario&gt;.service</code> escutam somente
-                em <code>127.0.0.1</code> com restrição de cgroup{" "}
-                <code>IPAddressAllow=127.0.0.1/32</code>.
-              </p>
-            </div>
-
-            <div className="table-responsive">
-              <table className="admin-table">
-                <thead>
-                  <tr>
-                    <th>Data/Hora</th>
-                    <th>Administrador</th>
-                    <th>IP Origem</th>
-                    <th>Ação</th>
-                    <th>Alvo</th>
-                    <th>Resultado</th>
-                    <th>Detalhes</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {auditLogs.map((log) => (
-                    <tr key={log.id}>
-                      <td>{formatDateTimePtBr(log.timestamp)}</td>
-                      <td>
-                        <code>{log.actor_username || "—"}</code>
-                      </td>
-                      <td>
-                        <code>{log.ip_address || "—"}</code>
-                      </td>
-                      <td>
-                        <strong>{log.action}</strong>
-                      </td>
-                      <td>
-                        {log.target_type}: <code>{log.target_id || "—"}</code>
-                      </td>
-                      <td>
-                        <span
-                          className={`status-pill ${
-                            log.outcome === "success"
-                              ? "status-online"
-                              : log.outcome === "denied"
-                              ? "status-degraded"
-                              : "status-unknown"
-                          }`}
-                        >
-                          {log.outcome}
-                        </span>
-                      </td>
-                      <td>
-                        <code>{JSON.stringify(log.details)}</code>
-                      </td>
-                    </tr>
-                  ))}
-                  {auditLogs.length === 0 && (
+              <div className="table-responsive">
+                <table className="admin-table">
+                  <thead>
                     <tr>
-                      <td colSpan={7}>Nenhum evento registrado até o momento.</td>
+                      <th>TV / Identificador</th>
+                      <th>Usuário Unix</th>
+                      <th>Endpoint Shadow</th>
+                      <th>Sessão XFCE</th>
+                      <th>Unidade Systemd</th>
+                      <th>Parâmetros FreeRDP 3</th>
+                      <th>Ações</th>
                     </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        )}
-      </main>
+                  </thead>
+                  <tbody>
+                    {tvs.map((tv) => (
+                      <tr key={tv.id}>
+                        <td>
+                          <strong>{tv.name}</strong>{" "}
+                          <span className="mono-badge">{tv.slug}</span>
+                          {!tv.enabled && (
+                            <span className="tag-disabled">Desabilitada</span>
+                          )}
+                        </td>
+                        <td>
+                          <code>{tv.unix_user}</code>
+                        </td>
+                        <td>
+                          <code>127.0.0.1:{tv.local_port}</code>
+                        </td>
+                        <td>
+                          <span
+                            className={`status-pill status-${tv.runtime.overall_status}`}
+                          >
+                            {xfceStateText(tv.runtime.xfce_session_state)}
+                            {tv.runtime.detected_display
+                              ? ` (${tv.runtime.detected_display})`
+                              : ""}
+                          </span>
+                        </td>
+                        <td>
+                          <code>{tv.runtime.systemd_unit}</code> (
+                          {tv.runtime.systemd_active_state})
+                        </td>
+                        <td>
+                          <code>
+                            /sec:tls {tv.gfx_enabled ? "-gfx" : "+gfx"}{" "}
+                            {tv.server_side_cursor
+                              ? "+server-side-cursor"
+                              : "-server-side-cursor"}
+                          </code>
+                        </td>
+                        <td className="table-actions">
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-xs"
+                            onClick={() => handleOpenEditModal(tv)}
+                          >
+                            Editar
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-xs"
+                            onClick={() => triggerServiceAction(tv, "restart")}
+                          >
+                            Restart
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-danger btn-xs"
+                            onClick={() => triggerServiceAction(tv, "stop")}
+                          >
+                            Stop
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
 
-      {/* Modal de Cadastro / Edição de TV */}
+          {activeTab === "audit" && (
+            <section className="admin-panel">
+              <div className="panel-header">
+                <div>
+                  <h2>Trilha de Auditoria e Eventos Operacionais</h2>
+                  <p className="panel-subtitle">
+                    Registro imutável de autenticações, sessões de vídeo ao vivo
+                    e comandos administrativos no host.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => void loadAuditLogs()}
+                >
+                  Atualizar Registros
+                </button>
+              </div>
+
+              <div className="table-responsive">
+                <table className="admin-table">
+                  <thead>
+                    <tr>
+                      <th>Data / Hora</th>
+                      <th>Operador</th>
+                      <th>IP Origem</th>
+                      <th>Evento</th>
+                      <th>Alvo</th>
+                      <th>Resultado</th>
+                      <th>Metadados</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {auditLogs.map((log) => (
+                      <tr key={log.id}>
+                        <td>
+                          {new Date(log.timestamp).toLocaleString("pt-BR")}
+                        </td>
+                        <td>
+                          <strong>{log.actor_username}</strong>
+                        </td>
+                        <td>
+                          <code>{log.ip_address}</code>
+                        </td>
+                        <td>
+                          <code>{log.action}</code>
+                        </td>
+                        <td>
+                          {log.target_type}: <strong>{log.target_id}</strong>
+                        </td>
+                        <td>
+                          <span
+                            className={`audit-outcome outcome-${log.outcome}`}
+                          >
+                            {log.outcome}
+                          </span>
+                        </td>
+                        <td>
+                          <code className="audit-details">
+                            {JSON.stringify(log.details)}
+                          </code>
+                        </td>
+                      </tr>
+                    ))}
+                    {auditLogs.length === 0 && (
+                      <tr>
+                        <td colSpan={7} className="empty-row">
+                          Nenhum evento registrado.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+        </main>
+      </div>
+
+      {/* Modal de Criação / Edição de TV */}
       {isFormModalOpen && (
         <div
           className="modal-backdrop"
@@ -1150,31 +1328,37 @@ export const App: React.FC = () => {
           aria-labelledby="tv-form-modal-title"
         >
           <div className="modal-box modal-box-lg">
-            <div className="panel-header">
-              <h3 id="tv-form-modal-title">
-                {editingTvId === null
-                  ? "Cadastrar Nova TV"
-                  : `Configurar ${formData.name} (${formData.slug})`}
-              </h3>
+            <div className="modal-header-row">
+              <div>
+                <h3 id="tv-form-modal-title">
+                  {editingTvId === null
+                    ? "Cadastrar Nova TV no Inventário"
+                    : `Configurar ${formData.name} (${formData.slug})`}
+                </h3>
+                <p className="panel-subtitle">
+                  As portas Shadow são vinculadas exclusivamente ao loopback{" "}
+                  <code>127.0.0.1</code> (faixa permitida: <code>3391</code> a{" "}
+                  <code>3499</code>).
+                </p>
+              </div>
               <button
                 type="button"
-                className="alert-close"
+                className="modal-close-btn"
                 onClick={() => setIsFormModalOpen(false)}
+                aria-label="Fechar janela"
               >
-                ×
+                ✕
               </button>
             </div>
 
             <form onSubmit={handleFormSubmit} className="tv-form">
-              <div className="form-row-2">
-                <div className="form-group">
-                  <label htmlFor="f-slug">Identificador (Slug)</label>
+              <div className="form-grid">
+                <label className="form-field">
+                  <span>Identificador Curto (Slug)</span>
                   <input
-                    id="f-slug"
                     type="text"
                     required
-                    pattern="^[a-z0-9][a-z0-9_-]{1,30}$"
-                    placeholder="Ex: tv04"
+                    pattern="^tv[0-9]{2,3}$"
                     value={formData.slug}
                     onChange={(e) =>
                       setFormData({
@@ -1182,44 +1366,44 @@ export const App: React.FC = () => {
                         slug: e.target.value.toLowerCase(),
                       })
                     }
+                    placeholder="Ex: tv04"
                   />
-                </div>
+                  <small>Formato exigido: tv01, tv02, tv03...</small>
+                </label>
 
-                <div className="form-group">
-                  <label htmlFor="f-name">Nome de Exibição da TV</label>
+                <label className="form-field">
+                  <span>Nome de Exibição</span>
                   <input
-                    id="f-name"
                     type="text"
                     required
-                    placeholder="Ex: TV 04 - Sala de Reunião"
                     value={formData.name}
                     onChange={(e) =>
                       setFormData({ ...formData, name: e.target.value })
                     }
+                    placeholder="Ex: TV 04 — Recepção"
                   />
-                </div>
-              </div>
+                </label>
 
-              <div className="form-row-3">
-                <div className="form-group">
-                  <label htmlFor="f-user">Usuário Unix da Sessão XFCE</label>
+                <label className="form-field">
+                  <span>Usuário Unix da Sessão XFCE</span>
                   <input
-                    id="f-user"
                     type="text"
                     required
-                    pattern="^[a-z_][a-z0-9_-]{1,30}$"
-                    placeholder="Ex: tv04"
+                    pattern="^tv[0-9]{2,3}$"
                     value={formData.unix_user}
                     onChange={(e) =>
-                      setFormData({ ...formData, unix_user: e.target.value })
+                      setFormData({
+                        ...formData,
+                        unix_user: e.target.value.toLowerCase(),
+                      })
                     }
+                    placeholder="Ex: tv04"
                   />
-                </div>
+                </label>
 
-                <div className="form-group">
-                  <label htmlFor="f-port">Porta Loopback (3391–3499)</label>
+                <label className="form-field">
+                  <span>Porta Local Shadow (127.0.0.1)</span>
                   <input
-                    id="f-port"
                     type="number"
                     required
                     min={3391}
@@ -1232,27 +1416,12 @@ export const App: React.FC = () => {
                       })
                     }
                   />
-                </div>
+                  <small>Padronização: tv01=3391, tv02=3392, tv03=3393</small>
+                </label>
 
-                <div className="form-group">
-                  <label htmlFor="f-location">Localização Física</label>
-                  <input
-                    id="f-location"
-                    type="text"
-                    placeholder="Ex: Recepção / NOC"
-                    value={formData.location}
-                    onChange={(e) =>
-                      setFormData({ ...formData, location: e.target.value })
-                    }
-                  />
-                </div>
-              </div>
-
-              <div className="form-row-2">
-                <div className="form-group">
-                  <label htmlFor="f-sec">Camada de Segurança RDP</label>
+                <label className="form-field">
+                  <span>Camada de Segurança RDP</span>
                   <select
-                    id="f-sec"
                     value={formData.sec_mode}
                     onChange={(e) =>
                       setFormData({
@@ -1262,30 +1431,29 @@ export const App: React.FC = () => {
                     }
                   >
                     <option value="tls">
-                      TLS Local (/sec:tls — Recomendado p/ FreeRDP 3 + guacd)
+                      TLS (/sec:tls — Recomendado FreeRDP 3)
                     </option>
                     <option value="rdp">Standard RDP (/sec:rdp)</option>
                     <option value="nla">NLA (/sec:nla)</option>
                   </select>
-                </div>
+                </label>
 
-                <div className="form-group">
-                  <label htmlFor="f-notes">Observações Operacionais</label>
+                <label className="form-field">
+                  <span>Localização / Observações</span>
                   <input
-                    id="f-notes"
                     type="text"
-                    placeholder="Opcional"
                     value={formData.notes}
                     onChange={(e) =>
                       setFormData({ ...formData, notes: e.target.value })
                     }
+                    placeholder="Ex: Painel de Produção / NOC"
                   />
-                </div>
+                </label>
               </div>
 
-              <fieldset className="checkbox-fieldset">
-                <legend>Parâmetros Fixos do FreeRDP Shadow</legend>
-                <label className="checkbox-label">
+              <fieldset className="checkbox-group">
+                <legend>Flags de Estabilidade do FreeRDP 3 Shadow</legend>
+                <label className="checkbox-item">
                   <input
                     type="checkbox"
                     checked={formData.gfx_enabled}
@@ -1297,11 +1465,12 @@ export const App: React.FC = () => {
                     }
                   />
                   <span>
-                    Modo de compatibilidade de superfície (<code>-gfx</code>)
+                    Forçar <code>-gfx</code> (Desativa pipeline H264/GFX para
+                    compatibilidade com <code>guacd</code>)
                   </span>
                 </label>
 
-                <label className="checkbox-label">
+                <label className="checkbox-item">
                   <input
                     type="checkbox"
                     checked={formData.server_side_cursor}
@@ -1313,12 +1482,12 @@ export const App: React.FC = () => {
                     }
                   />
                   <span>
-                    Renderizar ponteiro do mouse no servidor (
-                    <code>+server-side-cursor</code>)
+                    Habilitar <code>+server-side-cursor</code> (Renderiza cursor
+                    do mouse da sessão XFCE)
                   </span>
                 </label>
 
-                <label className="checkbox-label">
+                <label className="checkbox-item">
                   <input
                     type="checkbox"
                     checked={!formData.shadow_auth_enabled}
@@ -1330,12 +1499,12 @@ export const App: React.FC = () => {
                     }
                   />
                   <span>
-                    Autenticação delegada ao painel e loopback (
-                    <code>-auth</code> em <code>127.0.0.1</code>)
+                    Usar <code>-auth</code> no loopback local (Autenticação já
+                    imposta pelo painel web)
                   </span>
                 </label>
 
-                <label className="checkbox-label">
+                <label className="checkbox-item">
                   <input
                     type="checkbox"
                     checked={formData.enabled}
@@ -1343,14 +1512,12 @@ export const App: React.FC = () => {
                       setFormData({ ...formData, enabled: e.target.checked })
                     }
                   />
-                  <span>
-                    <strong>TV Habilitada no Painel</strong>
-                  </span>
+                  <span>TV habilitada para operação no painel</span>
                 </label>
               </fieldset>
 
               <div className="flags-preview-box">
-                <small>Linha de comando efetiva gerada pelo wrapper:</small>
+                <small>Comando efetivo supervisionado pelo systemd:</small>
                 <code>
                   freerdp-shadow-cli3 /port:{formData.local_port}{" "}
                   /bind-address:127.0.0.1{" "}
@@ -1424,8 +1591,8 @@ export const App: React.FC = () => {
         <LiveShadowViewer
           tv={activeViewerTv}
           csrfToken={session.csrf_token}
-          onClose={() => setActiveViewerTv(null)}
-          onStateUpdated={() => void loadTVs(true)}
+          onClose={handleCloseViewer}
+          onStateUpdated={handleViewerStateUpdated}
         />
       )}
     </div>

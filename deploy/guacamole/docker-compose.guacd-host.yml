@@ -19,8 +19,7 @@ services:
     container_name: tv-panel-guacd
     restart: unless-stopped
     network_mode: host
-    environment:
-      GUACD_LOG_LEVEL: info
+    command: ["-b", "127.0.0.1", "-l", "4822", "-L", "info"]
     security_opt:
       - no-new-privileges:true
 

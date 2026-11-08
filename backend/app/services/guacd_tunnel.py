@@ -128,21 +128,51 @@ async def run_guacd_websocket_tunnel(
     tratando também o opcode interno "" (UUID do túnel e heartbeats "ping") exigido pelo WebSocketTunnel.
     """
     settings = get_settings()
+    ws_send_lock = asyncio.Lock()
 
-    try:
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(settings.guacd_host, settings.guacd_port),
-            timeout=5.0,
+    async def send_ws_text(payload: str) -> None:
+        async with ws_send_lock:
+            await websocket.send_text(payload)
+
+    # Envia imediatamente o UUID interno do túnel (opcode vazio "") esperado pelo Guacamole.WebSocketTunnel
+    # para que o túnel passe ao estado OPEN e qualquer instrução 'error' subsequente exiba a mensagem real.
+    tunnel_uuid = str(uuid.uuid4())
+    await send_ws_text(encode_guac_instruction("", tunnel_uuid))
+
+    reader: asyncio.StreamReader | None = None
+    writer: asyncio.StreamWriter | None = None
+    candidate_hosts = [settings.guacd_host]
+    for fallback_host in ("::1", "localhost", "127.0.0.1"):
+        if fallback_host not in candidate_hosts:
+            candidate_hosts.append(fallback_host)
+
+    last_conn_err: Exception | None = None
+    for host in candidate_hosts:
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(host, settings.guacd_port),
+                timeout=2.5,
+            )
+            break
+        except Exception as err:
+            last_conn_err = err
+
+    if reader is None or writer is None:
+        logger.error(
+            "Falha ao conectar ao guacd (%s:%s): %s",
+            settings.guacd_host,
+            settings.guacd_port,
+            last_conn_err,
         )
-    except Exception:
-        await websocket.send_text(
+        await send_ws_text(
             encode_guac_instruction(
                 "error",
-                "Não foi possível conectar ao gateway local guacd (127.0.0.1:4822). Verifique se o container/serviço guacd está ativo.",
+                "Não foi possível conectar ao gateway local guacd (porta 4822). Verifique se o container tv-panel-guacd está ativo.",
                 "514",
             )
         )
-        await websocket.close(code=1011)
+        await send_ws_text(encode_guac_instruction("disconnect"))
+        await websocket.close()
         return
 
     try:
@@ -184,16 +214,6 @@ async def run_guacd_websocket_tunnel(
         handshake_payload += encode_guac_instruction("connect", *connect_values)
         writer.write(handshake_payload.encode("utf-8"))
         await writer.drain()
-
-        # 4. Envia o UUID interno do túnel (opcode vazio "") esperado pelo Guacamole.WebSocketTunnel
-        ws_send_lock = asyncio.Lock()
-
-        async def send_ws_text(payload: str) -> None:
-            async with ws_send_lock:
-                await websocket.send_text(payload)
-
-        tunnel_uuid = str(uuid.uuid4())
-        await send_ws_text(encode_guac_instruction("", tunnel_uuid))
 
         async def browser_to_guacd() -> None:
             client_buf = ""
