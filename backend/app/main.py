@@ -607,10 +607,26 @@ async def tv_guacamole_websocket(
     settings = get_settings()
     session_id = websocket.cookies.get(settings.session_cookie_name)
 
+    await websocket.accept(subprotocol="guacamole")
+    await websocket.send_text(
+        encode_guac_instruction("", "00000000-0000-0000-0000-000000000001")
+    )
+
+    async def reject_guac_ws(message: str, code: str = "519") -> None:
+        try:
+            await websocket.send_text(encode_guac_instruction("error", message, code))
+            await websocket.send_text(encode_guac_instruction("disconnect"))
+            await websocket.close()
+        except Exception:
+            pass
+
     conn = get_connection()
     try:
         if not session_id or not csrf_token:
-            await websocket.close(code=4401)
+            await reject_guac_ws(
+                "Sessão não autenticada ou token CSRF ausente. Recarregue o painel (Ctrl+F5) e faça login novamente.",
+                "769",
+            )
             return
 
         sess = conn.execute(
@@ -630,64 +646,65 @@ async def tv_guacamole_websocket(
             or parse_iso_utc(sess["expires_at"]) <= utcnow()
             or not hmac.compare_digest(csrf_token, sess["csrf_token"])
         ):
-            await websocket.close(code=4403)
+            await reject_guac_ws(
+                "Sua sessão administrativa expirou ou o token CSRF mudou. Recarregue a página (Ctrl+F5) e tente novamente.",
+                "769",
+            )
             return
 
         tv_row = conn.execute("SELECT * FROM tvs WHERE id = ?", (tv_id,)).fetchone()
         if not tv_row:
-            await websocket.close(code=4404)
+            await reject_guac_ws("TV não encontrada no banco de dados.", "519")
             return
 
         tv_dict: dict[str, Any] = dict(tv_row)
         runtime = await asyncio.to_thread(inspect_tv_runtime, tv_dict)
         if not tv_dict["enabled"] or runtime.overall_status != "online":
-            await websocket.accept(subprotocol="guacamole")
-            await websocket.send_text(encode_guac_instruction("", "00000000-0000-0000-0000-000000000000"))
-            await websocket.send_text(
-                encode_guac_instruction(
-                    "error",
-                    runtime.user_message
-                    or "Esta TV não está com sessão XFCE e Shadow disponíveis para espelhamento.",
-                    "519",
-                )
+            await reject_guac_ws(
+                runtime.user_message
+                or "Esta TV não está com sessão XFCE e Shadow disponíveis para espelhamento.",
+                "519",
             )
-            await websocket.send_text(encode_guac_instruction("disconnect"))
-            await websocket.close()
             return
 
         actor_username = str(sess["username"])
         client_host = websocket.client.host if websocket.client else "unknown"
-        record_audit_log(
-            conn,
-            actor_username=actor_username,
-            ip_address=client_host,
-            action="viewer.connect",
-            target_type="tv",
-            target_id=tv_dict["slug"],
-            outcome="success",
-            details={"local_port": tv_dict["local_port"]},
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-    await websocket.accept(subprotocol="guacamole")
-    register_ws_viewer(tv_id)
-    try:
-        await run_guacd_websocket_tunnel(
-            websocket, tv_dict, width=width, height=height
-        )
-    finally:
-        unregister_ws_viewer(tv_id)
-        with db_session() as audit_conn:
+        try:
             record_audit_log(
-                audit_conn,
+                conn,
                 actor_username=actor_username,
                 ip_address=client_host,
-                action="viewer.disconnect",
+                action="viewer.connect",
                 target_type="tv",
                 target_id=tv_dict["slug"],
                 outcome="success",
                 details={"local_port": tv_dict["local_port"]},
             )
+            conn.commit()
+        except Exception:
+            pass
+    finally:
+        conn.close()
+
+    register_ws_viewer(tv_id)
+    try:
+        await run_guacd_websocket_tunnel(
+            websocket, tv_dict, width=width, height=height, send_initial_uuid=False
+        )
+    finally:
+        unregister_ws_viewer(tv_id)
+        try:
+            with db_session() as audit_conn:
+                record_audit_log(
+                    audit_conn,
+                    actor_username=actor_username,
+                    ip_address=client_host,
+                    action="viewer.disconnect",
+                    target_type="tv",
+                    target_id=tv_dict["slug"],
+                    outcome="success",
+                    details={"local_port": tv_dict["local_port"]},
+                )
+        except Exception:
+            pass
 

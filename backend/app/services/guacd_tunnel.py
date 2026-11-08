@@ -110,6 +110,7 @@ def build_rdp_connection_params(tv_row: dict[str, Any], width: int, height: int)
         "color-depth": "32",
         "disable-audio": "true",
         "enable-audio-input": "false",
+        "disable-gfx": "true",
         "disable-bitmap-caching": "true",
         "disable-offscreen-caching": "true",
         "disable-glyph-caching": "true",
@@ -121,6 +122,7 @@ async def run_guacd_websocket_tunnel(
     tv_row: dict[str, Any],
     width: int = 1920,
     height: int = 1080,
+    send_initial_uuid: bool = True,
 ) -> None:
     """
     Estabelece o handshake do protocolo Guacamole com o daemon local guacd (127.0.0.1:4822)
@@ -134,10 +136,9 @@ async def run_guacd_websocket_tunnel(
         async with ws_send_lock:
             await websocket.send_text(payload)
 
-    # Envia imediatamente o UUID interno do túnel (opcode vazio "") esperado pelo Guacamole.WebSocketTunnel
-    # para que o túnel passe ao estado OPEN e qualquer instrução 'error' subsequente exiba a mensagem real.
-    tunnel_uuid = str(uuid.uuid4())
-    await send_ws_text(encode_guac_instruction("", tunnel_uuid))
+    if send_initial_uuid:
+        tunnel_uuid = str(uuid.uuid4())
+        await send_ws_text(encode_guac_instruction("", tunnel_uuid))
 
     reader: asyncio.StreamReader | None = None
     writer: asyncio.StreamWriter | None = None
@@ -215,6 +216,8 @@ async def run_guacd_websocket_tunnel(
         writer.write(handshake_payload.encode("utf-8"))
         await writer.drain()
 
+        guacd_ready_event = asyncio.Event()
+
         async def browser_to_guacd() -> None:
             client_buf = ""
             try:
@@ -239,9 +242,11 @@ async def run_guacd_websocket_tunnel(
                                     encode_guac_instruction("", "ping", parsed[2])
                                 )
                             continue
-                        forward_chunks.append(encode_guac_instruction(*parsed))
+                        # Só encaminha instruções de sessão ao guacd após o guacd enviar 'ready'
+                        if guacd_ready_event.is_set():
+                            forward_chunks.append(encode_guac_instruction(*parsed))
 
-                    if forward_chunks:
+                    if forward_chunks and guacd_ready_event.is_set():
                         writer.write("".join(forward_chunks).encode("utf-8"))
                         await writer.drain()
             except WebSocketDisconnect:
@@ -249,9 +254,12 @@ async def run_guacd_websocket_tunnel(
 
         async def guacd_to_browser(initial_buf: str) -> None:
             guac_buf = initial_buf
+            received_any_instruction = False
             if guac_buf:
                 complete_batch, guac_buf = split_complete_guac_instructions(guac_buf)
                 if complete_batch:
+                    received_any_instruction = True
+                    guacd_ready_event.set()
                     await send_ws_text(complete_batch)
             decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
             while True:
@@ -263,6 +271,7 @@ async def run_guacd_websocket_tunnel(
                     if guac_buf:
                         complete_batch, _ = split_complete_guac_instructions(guac_buf)
                         if complete_batch:
+                            received_any_instruction = True
                             await send_ws_text(complete_batch)
                     break
                 text = decoder.decode(data, final=False)
@@ -270,6 +279,8 @@ async def run_guacd_websocket_tunnel(
                     guac_buf += text
                     complete_batch, guac_buf = split_complete_guac_instructions(guac_buf)
                     if complete_batch:
+                        received_any_instruction = True
+                        guacd_ready_event.set()
                         if "5.error," in complete_batch:
                             logger.warning(
                                 "guacd reportou erro para TV %s: %s",
@@ -277,6 +288,15 @@ async def run_guacd_websocket_tunnel(
                                 complete_batch[:200],
                             )
                         await send_ws_text(complete_batch)
+
+            if not received_any_instruction:
+                await send_ws_text(
+                    encode_guac_instruction(
+                        "error",
+                        "O gateway guacd encerrou a sessão sem enviar confirmação 'ready'. Verifique os logs do tv-panel-guacd.",
+                        "519",
+                    )
+                )
 
         done, pending = await asyncio.wait(
             [

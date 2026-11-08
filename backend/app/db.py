@@ -10,17 +10,24 @@ from app.config import get_settings
 def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
     settings = get_settings()
     target_path = db_path or settings.db_path
-    target_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        os.chmod(target_path.parent, 0o775)
+    except OSError:
+        pass
     conn = sqlite3.connect(str(target_path), timeout=10.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON;")
-    # Usa journal_mode = DELETE para que processos sem privilégio (como tv-shadow-launch.sh)
-    # possam ler o arquivo SQLite em modo somente-leitura sem exigir criação de arquivos -wal/-shm.
-    conn.execute("PRAGMA journal_mode = DELETE;")
-    conn.execute("PRAGMA synchronous = NORMAL;")
+    try:
+        conn.execute("PRAGMA foreign_keys = ON;")
+        # Usa journal_mode = DELETE para que processos sem privilégio (como tv-shadow-launch.sh)
+        # possam ler o arquivo SQLite em modo somente-leitura sem exigir criação de arquivos -wal/-shm.
+        conn.execute("PRAGMA journal_mode = DELETE;")
+        conn.execute("PRAGMA synchronous = NORMAL;")
+    except sqlite3.Error:
+        pass
     try:
         if target_path.exists():
-            os.chmod(target_path, 0o644)
+            os.chmod(target_path, 0o664)
     except OSError:
         pass
     return conn
