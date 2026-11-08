@@ -13,6 +13,7 @@ StartLimitIntervalSec=0
 Type=simple
 User=%i
 Group=%i
+SupplementalGroups=tv-panel
 WorkingDirectory=/home/%i
 Environment="HOME=/home/%i"
 Environment="TV_PANEL_DB_PATH=/var/lib/tv-panel/tv_panel.db"
