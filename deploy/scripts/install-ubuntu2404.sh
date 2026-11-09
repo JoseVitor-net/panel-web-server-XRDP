@@ -92,6 +92,18 @@ chmod 0775 "${DATA_DIR}"
 
 (cd "${INSTALL_DIR}/backend" && sudo -u tv-panel TV_PANEL_DB_PATH="${DATA_DIR}/tv_panel.db" "${INSTALL_DIR}/venv/bin/python" -m app.cli migrate)
 
+# Configura portas padrão (3391, 3392, 3393) e sec_mode='rdp' para FreeRDP 2 no Ubuntu 24.04 LTS
+sqlite3 "${DATA_DIR}/tv_panel.db" "
+PRAGMA journal_mode=DELETE;
+UPDATE tvs SET local_port = 3490 + id;
+UPDATE tvs SET local_port = 3391, sec_mode = 'rdp' WHERE unix_user = 'tv01';
+UPDATE tvs SET local_port = 3392, sec_mode = 'rdp' WHERE unix_user = 'tv02';
+UPDATE tvs SET local_port = 3393, sec_mode = 'rdp' WHERE unix_user = 'tv03';
+"
+
+# Cria ou atualiza o administrador padrão 'operador_noc'
+(cd "${INSTALL_DIR}/backend" && echo "Admin#2026!" | sudo -u tv-panel TV_PANEL_DB_PATH="${DATA_DIR}/tv_panel.db" "${INSTALL_DIR}/venv/bin/python" -m app.cli create-admin --username operador_noc --password-stdin)
+
 # Garante permissões corretas para escrita pelo tv-panel e leitura pelas contas das TVs
 chown -R tv-panel:tv-panel "${DATA_DIR}"
 chmod 0775 "${DATA_DIR}"
@@ -121,3 +133,4 @@ done
 echo "[9/9] Instalação no Ubuntu Server 24.04 LTS concluída com sucesso!"
 echo "Para criar ou redefinir a senha do administrador 'operador_noc', execute:"
 echo "  cd /opt/tv-panel/backend && sudo -u tv-panel TV_PANEL_DB_PATH=/var/lib/tv-panel/tv_panel.db /opt/tv-panel/venv/bin/python -m app.cli create-admin --username operador_noc"
+
