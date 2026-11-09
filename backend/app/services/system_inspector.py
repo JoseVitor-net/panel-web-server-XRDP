@@ -97,6 +97,38 @@ def _validate_safe_unix_user(unix_user: str) -> None:
         raise ValueError("Usuário Unix inválido ou proibido para operação.")
 
 
+def provision_tv_unix_user(unix_user: str, unix_password: str = "") -> tuple[bool, str]:
+    """
+    Garante que o usuário Unix da TV exista no servidor Linux, possua ~/.xsession (xfce4-session)
+    e, se unix_password for informado, redefine a senha da conta Unix da TV para login no XRDP.
+    """
+    _validate_safe_unix_user(unix_user)
+    settings = get_settings()
+    if settings.env_mode == "simulation" or os.name == "nt":
+        return True, "Provisionamento simulado concluído."
+
+    helper_path = "/usr/local/libexec/tv-panel/tv-user-manage.sh"
+    if not Path(helper_path).exists():
+        return False, "Script tv-user-manage.sh não encontrado em /usr/local/libexec/tv-panel/."
+
+    clean_pw = (unix_password or "").replace("\r", "").replace("\n", "")
+    try:
+        proc = subprocess.run(
+            ["/usr/bin/sudo", "-n", helper_path, unix_user],
+            input=f"{clean_pw}\n",
+            capture_output=True,
+            text=True,
+            timeout=8.0,
+            check=False,
+        )
+        if proc.returncode != 0:
+            err_detail = (proc.stderr or proc.stdout or "").strip()
+            return False, err_detail or f"Falha ao provisionar usuário Unix '{unix_user}'."
+        return True, f"Usuário Unix '{unix_user}' provisionado com sucesso."
+    except Exception as exc:
+        return False, f"Erro ao executar provisionamento do usuário '{unix_user}': {exc}"
+
+
 def _find_xfce_display_and_xauth_linux(unix_user: str) -> tuple[bool, str | None, bool]:
     """
     Inspeciona no Debian 13 se o usuário possui uma sessão gráfica XFCE/XRDP ativa

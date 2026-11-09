@@ -3,9 +3,10 @@
 # as unidades tv-shadow@<usuario>.service. Nenhuma permissão sobre xrdp.service ou shell.
 
 Defaults:tv-panel !requiretty
-Cmnd_Alias TV_SHADOW_START = /usr/bin/systemctl start tv-shadow@tv[0-9][0-9].service
-Cmnd_Alias TV_SHADOW_STOP = /usr/bin/systemctl stop tv-shadow@tv[0-9][0-9].service
-Cmnd_Alias TV_SHADOW_RESTART = /usr/bin/systemctl restart tv-shadow@tv[0-9][0-9].service
+Cmnd_Alias TV_SHADOW_START = /usr/bin/systemctl start tv-shadow@*.service
+Cmnd_Alias TV_SHADOW_STOP = /usr/bin/systemctl stop tv-shadow@*.service
+Cmnd_Alias TV_SHADOW_RESTART = /usr/bin/systemctl restart tv-shadow@*.service
+Cmnd_Alias TV_USER_MANAGE = /usr/local/libexec/tv-panel/tv-user-manage.sh *
 
-tv-panel ALL=(root) NOPASSWD: TV_SHADOW_START, TV_SHADOW_STOP, TV_SHADOW_RESTART
+tv-panel ALL=(root) NOPASSWD: TV_SHADOW_START, TV_SHADOW_STOP, TV_SHADOW_RESTART, TV_USER_MANAGE
 

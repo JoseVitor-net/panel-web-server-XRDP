@@ -36,6 +36,7 @@ from app.services.system_inspector import (
     control_tv_shadow_service,
     inspect_tv_runtime,
     invalidate_runtime_cache,
+    provision_tv_unix_user,
     register_ws_viewer,
     unregister_ws_viewer,
 )
@@ -399,6 +400,10 @@ def create_tv(
         ),
     )
     tv_id = cursor.lastrowid
+    conn.commit()
+    prov_ok, prov_msg = provision_tv_unix_user(
+        payload.unix_user, payload.unix_password.strip()
+    )
     record_audit_log(
         conn,
         actor_username=sess["username"],
@@ -411,6 +416,8 @@ def create_tv(
             "unix_user": payload.unix_user,
             "local_port": payload.local_port,
             "enabled": payload.enabled,
+            "password_updated": bool(payload.unix_password.strip()),
+            "provisioned": prov_ok,
         },
     )
     row = conn.execute("SELECT * FROM tvs WHERE id = ?", (tv_id,)).fetchone()
@@ -502,6 +509,10 @@ def update_tv(
         ),
     )
 
+    conn.commit()
+    if payload.unix_password.strip() or existing["unix_user"] != payload.unix_user:
+        provision_tv_unix_user(payload.unix_user, payload.unix_password.strip())
+
     record_audit_log(
         conn,
         actor_username=sess["username"],
@@ -515,6 +526,7 @@ def update_tv(
             "local_port": payload.local_port,
             "enabled": payload.enabled,
             "disruptive_change": disruptive_change,
+            "password_updated": bool(payload.unix_password.strip()),
         },
     )
 

@@ -77,6 +77,7 @@ mkdir -p "${INSTALL_DIR}/frontend"
 cp -r "${SRC_ROOT}/frontend/dist" "${INSTALL_DIR}/frontend/"
 
 install -m 0755 "${SRC_ROOT}/deploy/scripts/tv-shadow-launch.sh" "${LIBEXEC_DIR}/tv-shadow-launch.sh"
+install -m 0755 "${SRC_ROOT}/deploy/scripts/tv-user-manage.sh" "${LIBEXEC_DIR}/tv-user-manage.sh"
 if [[ ! -f "${CONFIG_DIR}/tv-panel.env" ]]; then
     install -m 0640 -o root -g tv-panel "${SRC_ROOT}/deploy/config/tv-panel.env.example" "${CONFIG_DIR}/tv-panel.env"
     sed -i 's/^TV_PANEL_ENV_MODE=.*/TV_PANEL_ENV_MODE=production/' "${CONFIG_DIR}/tv-panel.env" || true
@@ -132,10 +133,13 @@ systemctl enable --now caddy.service
 systemctl restart caddy.service
 
 for tv_user in tv01 tv02 tv03; do
-    if id -u "${tv_user}" >/dev/null 2>&1; then
-        systemctl enable "tv-shadow@${tv_user}.service" || true
-        systemctl restart "tv-shadow@${tv_user}.service" || true
+    if ! id -u "${tv_user}" >/dev/null 2>&1; then
+        echo "Tv@2026!" | "${LIBEXEC_DIR}/tv-user-manage.sh" "${tv_user}" || true
+    else
+        echo "" | "${LIBEXEC_DIR}/tv-user-manage.sh" "${tv_user}" || true
     fi
+    systemctl enable "tv-shadow@${tv_user}.service" || true
+    systemctl restart "tv-shadow@${tv_user}.service" || true
 done
 
 echo "[9/9] Instalação no Ubuntu Server 24.04 LTS concluída com sucesso!"

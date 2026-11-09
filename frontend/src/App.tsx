@@ -16,12 +16,13 @@ const INITIAL_FORM: TVFormPayload = {
   unix_user: "",
   local_port: 3394,
   display_number: null,
-  sec_mode: "tls",
+  sec_mode: "rdp",
   gfx_enabled: true,
   server_side_cursor: true,
   shadow_auth_enabled: false,
   enabled: true,
   notes: "",
+  unix_password: "",
 };
 
 function statusLabel(status: OverallStatus): string {
@@ -270,6 +271,7 @@ export const App: React.FC = () => {
       shadow_auth_enabled: tv.shadow_auth_enabled,
       enabled: tv.enabled,
       notes: tv.notes,
+      unix_password: "",
     });
     setIsFormModalOpen(true);
   };
@@ -1454,6 +1456,34 @@ export const App: React.FC = () => {
                     }
                     placeholder="Ex: Painel de Produção / NOC"
                   />
+                </label>
+
+                <label className="form-field">
+                  <span>
+                    {editingTvId === null
+                      ? "Senha do Usuário Unix (Login XRDP da TV)"
+                      : "Redefinir Senha XRDP da TV (opcional)"}
+                  </span>
+                  <input
+                    type="password"
+                    autoComplete="new-password"
+                    value={formData.unix_password || ""}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        unix_password: e.target.value,
+                      })
+                    }
+                    placeholder={
+                      editingTvId === null
+                        ? "Ex: Tv@2026!"
+                        : "Deixe em branco para manter a senha atual"
+                    }
+                  />
+                  <small>
+                    Cria o usuário Linux + <code>~/.xsession</code> (XFCE) e
+                    aplica a senha para o login XRDP na porta 3389.
+                  </small>
                 </label>
               </div>
 

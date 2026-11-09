@@ -63,6 +63,11 @@ class TVBasePayload(BaseModel):
     shadow_auth_enabled: bool = Field(default=False, description="Se verdadeiro, usa +auth (exige PAM/SAM funcional); se falso, usa -auth restrito a 127.0.0.1")
     enabled: bool = Field(default=True, description="Habilita ou desabilita a TV no painel")
     notes: str = Field(default="", max_length=500, description="Observações operacionais")
+    unix_password: str = Field(
+        default="",
+        max_length=128,
+        description="Senha opcional da conta Unix da TV para login XRDP (se preenchida, cria/redefine a senha do usuário Unix da TV)",
+    )
 
     @field_validator("slug")
     @classmethod

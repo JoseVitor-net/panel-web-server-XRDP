@@ -59,6 +59,7 @@ export interface TVFormPayload {
   shadow_auth_enabled: boolean;
   enabled: boolean;
   notes: string;
+  unix_password?: string;
   confirm_disruption?: boolean;
 }
 
