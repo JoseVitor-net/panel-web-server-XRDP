@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NOC Display Ops — Antes × Depois</title>
+<style>
+  :root { --bg:#161412; --card:#221f1c; --text:#f6f0e7; --muted:#b0a698; --amber:#f5a524; --ok:#5fd593; --bad:#ff8070; --warn:#ffd54d; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:2rem; background:var(--bg); color:var(--text); font:16px/1.5 "Segoe UI", system-ui, sans-serif; }
+  h1 { margin:0 0 .25rem; font-size:2rem; }
+  h2 { margin:3rem 0 1rem; font-size:1.25rem; }
+  .sub { color:var(--muted); margin:0 0 2rem; }
+  .pair { display:grid; grid-template-columns:1fr 1fr; gap:1.5rem; }
+  figure { margin:0; background:var(--card); border-radius:12px; padding:1rem; }
+  figcaption { display:inline-block; font-weight:700; letter-spacing:.08em; font-size:.875rem; padding:.2rem .7rem; border-radius:999px; margin-bottom:.75rem; }
+  .before figcaption { background:rgba(255,128,112,.16); color:var(--bad); }
+  .after figcaption { background:rgba(95,213,147,.16); color:var(--ok); }
+  img { width:100%; height:auto; display:block; border-radius:8px; }
+  table { width:100%; border-collapse:collapse; background:var(--card); border-radius:12px; overflow:hidden; }
+  th, td { padding:.75rem 1rem; text-align:left; border-bottom:1px solid rgba(255,244,230,.09); vertical-align:top; }
+  th { color:var(--muted); font-size:.875rem; letter-spacing:.08em; text-transform:uppercase; }
+  tr:last-child td { border-bottom:0; }
+  .legend { display:flex; flex-wrap:wrap; gap:1.5rem; background:var(--card); border-radius:12px; padding:1.25rem 1.5rem; }
+  .legend div { display:flex; align-items:center; gap:.6rem; }
+  .legend svg { width:34px; height:34px; fill:none; stroke:currentColor; stroke-width:2.2; stroke-linecap:round; stroke-linejoin:round; }
+  @media (max-width:1100px) { .pair { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<h1>NOC Display Ops — Antes × Depois</h1>
+<p class="sub">Rebranding: de "dark + neon azul + monospace" para "sala de controle" (grafite quente, âmbar, Barlow). Mesmos dados, mesma funcionalidade, só o visual.</p>
+
+<h2>Video Wall</h2>
+<div class="pair">
+  <figure class="before"><figcaption>ANTES</figcaption><a href="before-video-wall.png"><img src="before-video-wall.png" alt="Video wall antes"></a></figure>
+  <figure class="after"><figcaption>DEPOIS</figcaption><a href="after-video-wall.png"><img src="after-video-wall.png" alt="Video wall depois"></a></figure>
+</div>
+
+<h2>Recursos &amp; Comparativo</h2>
+<div class="pair">
+  <figure class="before"><figcaption>ANTES</figcaption><a href="before-recursos.png"><img src="before-recursos.png" alt="Recursos antes"></a></figure>
+  <figure class="after"><figcaption>DEPOIS</figcaption><a href="after-recursos.png"><img src="after-recursos.png" alt="Recursos depois"></a></figure>
+</div>
+
+<h2>Inventário &amp; Systemd</h2>
+<div class="pair">
+  <figure class="before"><figcaption>ANTES</figcaption><a href="before-inventario.png"><img src="before-inventario.png" alt="Inventário antes"></a></figure>
+  <figure class="after"><figcaption>DEPOIS</figcaption><a href="after-inventario.png"><img src="after-inventario.png" alt="Inventário depois"></a></figure>
+</div>
+
+<h2>Login</h2>
+<div class="pair">
+  <figure class="before"><figcaption>ANTES</figcaption><a href="before-login.png"><img src="before-login.png" alt="Login antes"></a></figure>
+  <figure class="after"><figcaption>DEPOIS</figcaption><a href="after-login.png"><img src="after-login.png" alt="Login depois"></a></figure>
+</div>
+
+<h2>Status: cor + ícone (a forma também muda, não só a cor)</h2>
+<div class="legend">
+  <div style="color:var(--ok)"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.2"/><path d="M7.5 12.5l3 3 6-7"/></svg>Sinal ativo</div>
+  <div style="color:var(--warn)"><svg viewBox="0 0 24 24"><path d="M12 3.2l9.2 16.2H2.8z"/><path d="M12 8v5M12 16.2v.1"/></svg>Atenção / Shadow indisponível</div>
+  <div style="color:#b0a698"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.2"/><path d="M8.5 12h7"/></svg>Sem sessão XFCE</div>
+  <div style="color:#b0a698"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.2"/><path d="M7 17L17 7"/></svg>Desabilitada</div>
+  <div style="color:var(--bad)"><svg viewBox="0 0 24 24"><path d="M12 2.8l9.2 9.2-9.2 9.2L2.8 12z"/><path d="M9.6 9.7a2.5 2.5 0 114 2c-.9.6-1.6 1-1.6 2M12 16.6v.1"/></svg>Não verificado</div>
+</div>
+
+<h2>Auditoria (medida no navegador, 1280×720 / 1920×1080 / 2560×1440)</h2>
+<table>
+  <tr><th>Critério</th><th>Antes</th><th>Depois</th></tr>
+  <tr><td>Tamanho mínimo de fonte</td><td>67 de 81 declarações abaixo de 14px (mínimo 0.58rem ≈ 9px)</td><td>0 abaixo de 14px. Mínimo medido: 14px (1280), 15,5px (1920), 17,7px (2560). A base cresce com a tela (16→21px)</td></tr>
+  <tr><td>Contraste WCAG AA (4.5:1; 3:1 texto grande)</td><td>Não medido; rótulos em cinza-azulado sobre fundos escuros, texto de 9–11px</td><td>0 falhas em todos os textos de todas as telas. Botão primário: texto escuro sobre âmbar</td></tr>
+  <tr><td>Status só por cor (WCAG 1.4.1)</td><td>Pontos coloridos de 7px na faixa técnica; pílulas com texto pequeno</td><td>Ícone com forma própria (círculo, triângulo, losango) + cor, com <code>aria-label</code></td></tr>
+  <tr><td>Alvos de toque</td><td>Botões xs com ~28px de altura</td><td>Mínimo 36px (xs), 40px (sm), 44px (padrão). Único item abaixo de 36px: o checkbox nativo do modal, mas o rótulo clicável tem 44px</td></tr>
+  <tr><td>Hierarquia</td><td>Monospace em tudo; rótulos e valores com o mesmo peso</td><td>Números em Barlow Condensed 700 (até 3rem), rótulos em caixa-alta 14px, texto em Barlow. Monospace só para comandos</td></tr>
+  <tr><td>Consistência de espaçamento</td><td>Dezenas de valores soltos (0.18rem, 0.55rem, 0.85rem…)</td><td>Escala única de 7 passos (4/8/12/16/24/32/48px). Resta 1 valor fora da escala, o <code>0.375rem</code> do raio de chips</td></tr>
+  <tr><td>Bordas</td><td>64 bordas de 1px</td><td>5 (só campos de formulário e separadores de tabela)</td></tr>
+  <tr><td>Fontes</td><td>Pediam Google Fonts, mas o CSP do backend bloqueava, então caía no fallback</td><td>Barlow e Barlow Condensed empacotadas no build (<code>@fontsource</code>), sem rede externa</td></tr>
+</table>
+</body>
+</html>
+

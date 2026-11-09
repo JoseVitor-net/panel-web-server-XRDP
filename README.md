@@ -4,6 +4,8 @@ Console web completo (**FastAPI + SQLite + React/TypeScript + Apache Guacamole H
 
 Compatível nativamente com **Ubuntu 22.04 LTS / 24.04 LTS** e **Debian 12 ("Bookworm") / Debian 13 ("Trixie")**.
 
+> 📊 **Design & Acessibilidade NOC**: Interface em padrão *sala de controle profissional* (grafite quente, tipografia Barlow, contraste WCAG AA e status com diferenciação por forma de ícone + cor). Veja o [comparativo visual antes × depois](./docs/redesign/before-after.html).
+
 ---
 
 ## 📸 Visão Geral do Sistema (Screenshots)

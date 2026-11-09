@@ -17,6 +17,7 @@ deploy/config/tv-panel.env
 # Node / Frontend
 frontend/node_modules/
 frontend/dist/
+*.tsbuildinfo
 *.log
 
 # Sistema Operacional / IDEs

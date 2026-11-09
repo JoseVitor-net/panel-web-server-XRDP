@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "./api";
 import { LiveShadowViewer } from "./components/LiveShadowViewer";
 import { MiniTvPreview } from "./components/MiniTvPreview";
+import { StateIcon, StatusBadge } from "./components/StatusIcons";
 import {
   AuditLogItem,
   AuthSession,
@@ -1092,12 +1093,13 @@ export const App: React.FC = () => {
                           </span>
                         </div>
 
-                        <span
-                          className={`status-pill status-${rt.overall_status}`}
-                        >
-                          <span className="status-pill-dot" />
-                          {statusLabel(rt.overall_status, rt.shadow_service_state)}
-                        </span>
+                        <StatusBadge
+                          status={rt.overall_status}
+                          label={statusLabel(
+                            rt.overall_status,
+                            rt.shadow_service_state
+                          )}
+                        />
                       </div>
 
                       {/* Moldura 16:9 de Preview de Monitor */}
@@ -1229,14 +1231,15 @@ export const App: React.FC = () => {
                         <div className="telemetry-cell">
                           <span className="t-label">1. Sessão XFCE</span>
                           <span className="t-val">
-                            <span
-                              className={`dot dot-${
+                            <StateIcon
+                              size={20}
+                              tone={
                                 rt.xfce_session_state === "active"
-                                  ? "green"
+                                  ? "ok"
                                   : rt.xfce_session_state === "inactive"
-                                  ? "gray"
-                                  : "purple"
-                              }`}
+                                  ? "idle"
+                                  : "warn"
+                              }
                             />
                             {xfceStateText(rt.xfce_session_state)}
                           </span>
@@ -1245,15 +1248,16 @@ export const App: React.FC = () => {
                         <div className="telemetry-cell">
                           <span className="t-label">2. Listener Shadow</span>
                           <span className="t-val">
-                            <span
-                              className={`dot dot-${
+                            <StateIcon
+                              size={20}
+                              tone={
                                 rt.shadow_service_state === "available"
-                                  ? "green"
+                                  ? "ok"
                                   : rt.shadow_service_state === "conflict" ||
                                     rt.shadow_service_state === "error"
-                                  ? "red"
-                                  : "amber"
-                              }`}
+                                  ? "bad"
+                                  : "warn"
+                              }
                             />
                             {shadowStateText(rt.shadow_service_state)}
                           </span>
@@ -1262,12 +1266,13 @@ export const App: React.FC = () => {
                         <div className="telemetry-cell">
                           <span className="t-label">3. Visualizador</span>
                           <span className="t-val">
-                            <span
-                              className={`dot dot-${
+                            <StateIcon
+                              size={20}
+                              tone={
                                 rt.viewer_connection_state === "connected"
-                                  ? "blue"
-                                  : "gray"
-                              }`}
+                                  ? "live"
+                                  : "idle"
+                              }
                             />
                             {viewerStateText(
                               rt.viewer_connection_state,
@@ -1483,15 +1488,14 @@ export const App: React.FC = () => {
                             <span className="mono-badge">{tv.unix_user}</span>
                           </td>
                           <td>
-                            <span
-                              className={`status-pill status-${rt.overall_status}`}
-                            >
-                              <span className="status-pill-dot" />
-                              {statusLabel(
+                            <StatusBadge
+                              size="sm"
+                              status={rt.overall_status}
+                              label={statusLabel(
                                 rt.overall_status,
                                 rt.shadow_service_state
                               )}
-                            </span>
+                            />
                           </td>
                           <td style={{ minWidth: 160 }}>
                             <div className="table-bar-wrap">
@@ -1618,9 +1622,17 @@ export const App: React.FC = () => {
                           <code>127.0.0.1:{tv.local_port}</code>
                         </td>
                         <td>
-                          <span
-                            className={`status-pill status-${tv.runtime.overall_status}`}
-                          >
+                          <span className="state-inline">
+                            <StateIcon
+                              size={20}
+                              tone={
+                                tv.runtime.xfce_session_state === "active"
+                                  ? "ok"
+                                  : tv.runtime.xfce_session_state === "inactive"
+                                  ? "idle"
+                                  : "warn"
+                              }
+                            />
                             {xfceStateText(tv.runtime.xfce_session_state)}
                             {tv.runtime.detected_display
                               ? ` (${tv.runtime.detected_display})`
