@@ -54,7 +54,7 @@ export const MiniTvPreview: React.FC<MiniTvPreviewProps> = ({
     clientRef.current = client;
 
     const display = client.getDisplay();
-    display.showCursor(false);
+    display.showCursor?.(false);
     const displayEl = display.getElement();
     if (hostRef.current) {
       hostRef.current.innerHTML = "";

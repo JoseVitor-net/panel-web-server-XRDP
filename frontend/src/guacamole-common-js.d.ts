@@ -12,6 +12,7 @@ declare module "guacamole-common-js" {
     getWidth(): number;
     getHeight(): number;
     scale(scaleFactor: number): void;
+    showCursor?(shown: boolean): void;
     onresize?: (width: number, height: number) => void;
   }
 

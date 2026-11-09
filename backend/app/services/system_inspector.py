@@ -1,5 +1,8 @@
 import os
-import pwd
+try:
+    import pwd
+except ImportError:
+    pwd = None  # type: ignore[assignment]
 import re
 import shutil
 import socket
