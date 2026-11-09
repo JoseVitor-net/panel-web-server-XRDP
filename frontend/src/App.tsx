@@ -1136,58 +1136,58 @@ export const App: React.FC = () => {
                           )}
                         </div>
 
-                        <div className="monitor-center">
-                          {canWatch && activeViewerTv?.id !== tv.id ? (
-                            <MiniTvPreview
-                              tv={tv}
-                              csrfToken={session.csrf_token}
-                            />
-                          ) : rt.xfce_session_state === "active" ? (
-                            <div className="vbox-synthetic-desktop">
-                              <div className="vbox-top-panel">
-                                <span className="vbox-panel-pill">
-                                  XFCE4 Desktop
+                        {canWatch && activeViewerTv?.id !== tv.id ? (
+                          <MiniTvPreview
+                            tv={tv}
+                            csrfToken={session.csrf_token}
+                          />
+                        ) : rt.xfce_session_state === "active" ? (
+                          <div className="vbox-synthetic-desktop">
+                            <div className="vbox-top-panel">
+                              <span className="vbox-panel-pill">
+                                XFCE4 Desktop
+                              </span>
+                              <span className="vbox-panel-clock">
+                                {rt.detected_display || ":10.0"} •{" "}
+                                {tv.unix_user}
+                              </span>
+                            </div>
+                            <div className="vbox-window-mock">
+                              <div className="vbox-win-titlebar">
+                                <span className="vbox-win-dots">
+                                  <i />
+                                  <i />
+                                  <i />
                                 </span>
-                                <span className="vbox-panel-clock">
-                                  {rt.detected_display || ":10.0"} •{" "}
-                                  {tv.unix_user}
+                                <span>
+                                  {statusLabel(
+                                    rt.overall_status,
+                                    rt.shadow_service_state
+                                  )}
                                 </span>
                               </div>
-                              <div className="vbox-window-mock">
-                                <div className="vbox-win-titlebar">
-                                  <span className="vbox-win-dots">
-                                    <i />
-                                    <i />
-                                    <i />
-                                  </span>
-                                  <span>
-                                    {statusLabel(
-                                      rt.overall_status,
-                                      rt.shadow_service_state
-                                    )}
-                                  </span>
+                              <div className="vbox-win-body">
+                                <div className="vbox-win-stat">
+                                  <span>CPU</span>
+                                  <strong>
+                                    {(rt.cpu_percent ?? 0).toFixed(1)}%
+                                  </strong>
                                 </div>
-                                <div className="vbox-win-body">
-                                  <div className="vbox-win-stat">
-                                    <span>CPU</span>
-                                    <strong>
-                                      {(rt.cpu_percent ?? 0).toFixed(1)}%
-                                    </strong>
-                                  </div>
-                                  <div className="vbox-win-stat">
-                                    <span>RAM</span>
-                                    <strong>
-                                      {(rt.memory_mb ?? 0).toFixed(0)} MB
-                                    </strong>
-                                  </div>
-                                  <div className="vbox-win-stat">
-                                    <span>Proc</span>
-                                    <strong>{rt.process_count ?? 0}</strong>
-                                  </div>
+                                <div className="vbox-win-stat">
+                                  <span>RAM</span>
+                                  <strong>
+                                    {(rt.memory_mb ?? 0).toFixed(0)} MB
+                                  </strong>
+                                </div>
+                                <div className="vbox-win-stat">
+                                  <span>Proc</span>
+                                  <strong>{rt.process_count ?? 0}</strong>
                                 </div>
                               </div>
                             </div>
-                          ) : (
+                          </div>
+                        ) : (
+                          <div className="monitor-center">
                             <div className="monitor-offline-state">
                               <svg
                                 viewBox="0 0 24 24"
@@ -1215,8 +1215,8 @@ export const App: React.FC = () => {
                               </strong>
                               <small>{rt.user_message}</small>
                             </div>
-                          )}
-                        </div>
+                          </div>
+                        )}
 
                         <div className="monitor-bottom-hud">
                           <span>USER: {tv.unix_user}</span>

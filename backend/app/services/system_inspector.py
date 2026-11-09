@@ -19,6 +19,7 @@ from app.security import iso_utc
 
 # Registro em memória de conexões WebSocket ativas por TV ID
 _ACTIVE_WS_VIEWERS: dict[int, int] = {}
+_ACTIVE_WS_PREVIEWS: dict[int, int] = {}
 
 # Cache leve de inspeção (evita dezenas de forks de subprocessos por requisição e elimina travamentos)
 _RUNTIME_CACHE: dict[int, tuple[float, TVRuntimeState]] = {}
@@ -371,12 +372,22 @@ def inspect_system_overview(tv_rows: list[dict[str, Any]]) -> SystemOverviewTele
     )
 
 
-def register_ws_viewer(tv_id: int) -> None:
+def register_ws_viewer(tv_id: int, *, is_preview: bool = False) -> None:
+    if is_preview:
+        _ACTIVE_WS_PREVIEWS[tv_id] = _ACTIVE_WS_PREVIEWS.get(tv_id, 0) + 1
+        return
     _ACTIVE_WS_VIEWERS[tv_id] = _ACTIVE_WS_VIEWERS.get(tv_id, 0) + 1
     invalidate_runtime_cache(tv_id)
 
 
-def unregister_ws_viewer(tv_id: int) -> None:
+def unregister_ws_viewer(tv_id: int, *, is_preview: bool = False) -> None:
+    if is_preview:
+        current_prev = _ACTIVE_WS_PREVIEWS.get(tv_id, 0)
+        if current_prev <= 1:
+            _ACTIVE_WS_PREVIEWS.pop(tv_id, None)
+        else:
+            _ACTIVE_WS_PREVIEWS[tv_id] = current_prev - 1
+        return
     current = _ACTIVE_WS_VIEWERS.get(tv_id, 0)
     if current <= 1:
         _ACTIVE_WS_VIEWERS.pop(tv_id, None)
@@ -387,6 +398,10 @@ def unregister_ws_viewer(tv_id: int) -> None:
 
 def get_ws_viewer_count(tv_id: int) -> int:
     return _ACTIVE_WS_VIEWERS.get(tv_id, 0)
+
+
+def get_ws_preview_count(tv_id: int) -> int:
+    return _ACTIVE_WS_PREVIEWS.get(tv_id, 0)
 
 
 def build_shadow_flags_preview(tv_row: dict[str, Any]) -> str:
@@ -697,7 +712,9 @@ def inspect_tv_runtime(tv_row: dict[str, Any], *, force_refresh: bool = False) -
                     pass
 
         xfce_state_str = "active" if xfce_active else "inactive"
-        total_viewers = max(ws_viewers, tcp_estab)
+        ws_previews = get_ws_preview_count(tv_id)
+        non_preview_tcp = max(0, tcp_estab - ws_previews)
+        total_viewers = max(ws_viewers, non_preview_tcp)
         viewer_state_str = "connected" if total_viewers > 0 else "idle"
 
         if shadow_port_state == "conflict":

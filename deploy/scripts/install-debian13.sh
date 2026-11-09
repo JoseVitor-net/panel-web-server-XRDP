@@ -46,6 +46,7 @@ if [[ -d "${SRC_ROOT}/frontend/dist" ]]; then
 fi
 
 install -m 0755 "${SRC_ROOT}/deploy/scripts/tv-shadow-launch.sh" "${LIBEXEC_DIR}/tv-shadow-launch.sh"
+install -m 0755 "${SRC_ROOT}/deploy/scripts/tv-user-manage.sh" "${LIBEXEC_DIR}/tv-user-manage.sh"
 if [[ ! -f "${CONFIG_DIR}/tv-panel.env" ]]; then
     install -m 0640 -o root -g tv-panel "${SRC_ROOT}/deploy/config/tv-panel.env.example" "${CONFIG_DIR}/tv-panel.env"
 fi

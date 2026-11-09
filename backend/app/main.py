@@ -733,8 +733,7 @@ async def tv_guacamole_websocket(
     finally:
         conn.close()
 
-    if not is_preview:
-        register_ws_viewer(tv_id)
+    register_ws_viewer(tv_id, is_preview=is_preview)
     try:
         await run_guacd_websocket_tunnel(
             websocket,
@@ -745,8 +744,8 @@ async def tv_guacamole_websocket(
             read_only=is_preview,
         )
     finally:
+        unregister_ws_viewer(tv_id, is_preview=is_preview)
         if not is_preview:
-            unregister_ws_viewer(tv_id)
             try:
                 with db_session() as audit_conn:
                     record_audit_log(

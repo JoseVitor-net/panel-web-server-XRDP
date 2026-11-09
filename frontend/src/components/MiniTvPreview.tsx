@@ -24,13 +24,24 @@ export const MiniTvPreview: React.FC<MiniTvPreviewProps> = ({
     const w = explicitW ?? display.getWidth();
     const h = explicitH ?? display.getHeight();
     if (w <= 0 || h <= 0) return;
-    const cw = container.clientWidth;
-    const ch = container.clientHeight;
+    const rect = container.getBoundingClientRect();
+    const cw = rect.width || container.clientWidth;
+    const ch = rect.height || container.clientHeight;
     if (cw <= 0 || ch <= 0) return;
 
     const scale = Math.min(cw / w, ch / h);
     if (scale > 0) {
       display.scale(scale);
+      const displayEl = display.getElement();
+      const scaledW = w * scale;
+      const scaledH = h * scale;
+      const stretchX = scaledW > 0 ? cw / scaledW : 1;
+      const stretchY = scaledH > 0 ? ch / scaledH : 1;
+      displayEl.style.transformOrigin = "center center";
+      displayEl.style.transform =
+        Math.abs(stretchX - 1) > 0.02 || Math.abs(stretchY - 1) > 0.02
+          ? `scale(${stretchX.toFixed(4)}, ${stretchY.toFixed(4)})`
+          : "none";
     }
   }, []);
 
@@ -43,6 +54,7 @@ export const MiniTvPreview: React.FC<MiniTvPreviewProps> = ({
     clientRef.current = client;
 
     const display = client.getDisplay();
+    display.showCursor(false);
     const displayEl = display.getElement();
     if (hostRef.current) {
       hostRef.current.innerHTML = "";
@@ -53,6 +65,19 @@ export const MiniTvPreview: React.FC<MiniTvPreviewProps> = ({
       if (w > 0 && h > 0) {
         setLiveFrameReady(true);
         fitPreviewScale(w, h);
+        window.requestAnimationFrame(() => fitPreviewScale(w, h));
+      }
+    };
+
+    client.onstatechange = (state: number) => {
+      if (state === 3) {
+        const w = display.getWidth();
+        const h = display.getHeight();
+        if (w > 0 && h > 0) {
+          setLiveFrameReady(true);
+          fitPreviewScale(w, h);
+          window.requestAnimationFrame(() => fitPreviewScale(w, h));
+        }
       }
     };
 
