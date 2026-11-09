@@ -1,5 +1,7 @@
 # /etc/systemd/system/tv-panel-api.service
 # Serviço do backend FastAPI (executado como usuário de sistema sem privilégios 'tv-panel')
+# Nota: PrivateTmp=no permite inspecionar /tmp/.X11-unix/X* para detectar sessões XFCE ativas,
+# e permite ao helper sudo /usr/local/libexec/tv-panel/tv-user-manage.sh provisionar contas de TV.
 
 [Unit]
 Description=Painel Web de Administracao e Acesso Shadow RDP (API FastAPI)
@@ -16,13 +18,8 @@ ExecStart=/opt/tv-panel/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 80
 Restart=always
 RestartSec=3s
 
-# Endurecimento de segurança
 NoNewPrivileges=no
-PrivateTmp=yes
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=/var/lib/tv-panel
+PrivateTmp=no
 
 [Install]
 WantedBy=multi-user.target
-

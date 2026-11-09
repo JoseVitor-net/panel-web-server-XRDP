@@ -25,14 +25,19 @@ const INITIAL_FORM: TVFormPayload = {
   unix_password: "",
 };
 
-function statusLabel(status: OverallStatus): string {
+function statusLabel(
+  status: OverallStatus,
+  shadowState?: TVItem["runtime"]["shadow_service_state"]
+): string {
   switch (status) {
     case "online":
       return "Sinal Ativo";
     case "offline":
       return "Sem Sessão XFCE";
     case "degraded":
-      return "Shadow Parado";
+      return shadowState === "starting"
+        ? "Sincronizando Shadow"
+        : "Shadow Indisponível";
     case "disabled":
       return "Desabilitada";
     case "unknown":
@@ -931,7 +936,7 @@ export const App: React.FC = () => {
                           className={`status-pill status-${rt.overall_status}`}
                         >
                           <span className="status-pill-dot" />
-                          {statusLabel(rt.overall_status)}
+                          {statusLabel(rt.overall_status, rt.shadow_service_state)}
                         </span>
                       </div>
 
@@ -1010,7 +1015,7 @@ export const App: React.FC = () => {
                                 <line x1="2" y1="3" x2="22" y2="17" />
                                 <line x1="8" y1="21" x2="16" y2="21" />
                               </svg>
-                              <strong>{statusLabel(rt.overall_status)}</strong>
+                              <strong>{statusLabel(rt.overall_status, rt.shadow_service_state)}</strong>
                               <small>{rt.user_message}</small>
                             </div>
                           )}
@@ -1102,28 +1107,17 @@ export const App: React.FC = () => {
                           <button
                             type="button"
                             className="btn btn-secondary btn-sm"
-                            disabled={
-                              isBusy || rt.xfce_session_state !== "active"
-                            }
-                            onClick={() => triggerServiceAction(tv, "start")}
-                            title="Iniciar serviço FreeRDP Shadow"
-                          >
-                            Start
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-secondary btn-sm"
                             disabled={isBusy}
                             onClick={() => triggerServiceAction(tv, "restart")}
-                            title="Reiniciar serviço FreeRDP Shadow"
+                            title="Ressincronizar listener Shadow da sessão da TV"
                           >
-                            Restart
+                            Ressincronizar
                           </button>
                           <button
                             type="button"
                             className="btn btn-secondary btn-sm"
                             onClick={() => handleOpenEditModal(tv)}
-                            title="Editar parâmetros da TV"
+                            title="Editar parâmetros e senha da TV"
                           >
                             <svg
                               viewBox="0 0 24 24"

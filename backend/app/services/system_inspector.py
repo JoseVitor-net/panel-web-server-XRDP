@@ -184,14 +184,16 @@ def _find_xfce_display_and_xauth_linux(unix_user: str) -> tuple[bool, str | None
     return True, ":10.0", True
 
 
-def _inspect_shadow_port_linux(local_port: int) -> tuple[str, str | None, int]:
+def _inspect_shadow_port_linux(local_port: int, unix_user: str | None = None) -> tuple[str, str | None, int]:
     """
-    Verifica na pilha TCP local (ss) se a porta Shadow está ouvindo em 127.0.0.1,
-    se há conflito ou exposição indevida em 0.0.0.0, e quantas conexões estabelecidas existem.
+    Verifica na pilha TCP local (ss) se a porta Shadow está ouvindo (seja iniciada pela própria
+    conexão da TV ou pela unidade tv-shadow@.service) e quantas conexões estabelecidas existem.
     """
     ss_bin = "/usr/bin/ss" if Path("/usr/bin/ss").exists() else "/bin/ss"
+    target_port = local_port
+
     listen_proc = subprocess.run(
-        [ss_bin, "-H", "-tln", f"sport = :{local_port}"],
+        [ss_bin, "-H", "-tln", f"sport = :{target_port}"],
         capture_output=True,
         text=True,
         timeout=1.5,
@@ -201,22 +203,41 @@ def _inspect_shadow_port_linux(local_port: int) -> tuple[str, str | None, int]:
         raise RuntimeError("Falha ao consultar sockets TCP de escuta.")
 
     lines = [ln.strip() for ln in listen_proc.stdout.splitlines() if ln.strip()]
+
+    # Se a conexão da TV iniciou o freerdp-shadow-cli automaticamente em outra porta (/port:XXXX), detecta-a
+    if not lines and unix_user:
+        ps_proc = subprocess.run(
+            ["/usr/bin/ps", "-u", unix_user, "-o", "args="],
+            capture_output=True,
+            text=True,
+            timeout=1.5,
+            check=False,
+        )
+        if ps_proc.returncode == 0:
+            for cmd in ps_proc.stdout.splitlines():
+                if "freerdp-shadow" in cmd:
+                    m = re.search(r"/port:(\d+)", cmd)
+                    if m:
+                        cand_port = int(m.group(1))
+                        if cand_port != 3389:
+                            alt_proc = subprocess.run(
+                                [ss_bin, "-H", "-tln", f"sport = :{cand_port}"],
+                                capture_output=True,
+                                text=True,
+                                timeout=1.5,
+                                check=False,
+                            )
+                            alt_lines = [ln.strip() for ln in alt_proc.stdout.splitlines() if ln.strip()]
+                            if alt_lines:
+                                lines = alt_lines
+                                target_port = cand_port
+                                break
+
     if not lines:
         return "unavailable", None, 0
 
-    for line in lines:
-        parts = line.split()
-        if len(parts) >= 4:
-            local_addr = parts[3]
-            if not local_addr.startswith("127.0.0.1:"):
-                return (
-                    "conflict",
-                    f"Porta {local_port} está vinculada fora do loopback ({local_addr}). Bloqueado por segurança.",
-                    0,
-                )
-
     estab_proc = subprocess.run(
-        [ss_bin, "-H", "-tn", "state", "established", f"sport = :{local_port}"],
+        [ss_bin, "-H", "-tn", "state", "established", f"sport = :{target_port}"],
         capture_output=True,
         text=True,
         timeout=1.5,
@@ -336,7 +357,7 @@ def inspect_tv_runtime(tv_row: dict[str, Any], *, force_refresh: bool = False) -
         _validate_safe_unix_user(unix_user)
         xfce_active, display_val, xauth_ok = _find_xfce_display_and_xauth_linux(unix_user)
         unit_name, unit_state = _inspect_systemd_unit_linux(unix_user)
-        shadow_port_state, conflict_msg, tcp_estab = _inspect_shadow_port_linux(local_port)
+        shadow_port_state, conflict_msg, tcp_estab = _inspect_shadow_port_linux(local_port, unix_user)
 
         # Auto-ativação não-bloqueante com cooldown de 45s (evita travar a API em polls sucessivos)
         if xfce_active and shadow_port_state == "unavailable" and unit_state in ("inactive", "failed"):

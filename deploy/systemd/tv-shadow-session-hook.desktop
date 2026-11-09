@@ -1,14 +1,13 @@
 # /etc/xdg/autostart/tv-shadow-session-hook.desktop
-# Hook XDG Autostart opcional para publicar DISPLAY/XAUTHORITY na sessão XFCE
-# após o login gráfico das contas de TV. Não utiliza loginctl enable-linger.
+# Hook XDG Autostart executado automaticamente dentro da sessão XFCE quando a TV conecta via XRDP.
+# Publica DISPLAY e XAUTHORITY em ~/.tv-shadow-env para anexação imediata do FreeRDP Shadow.
 
 [Desktop Entry]
 Type=Application
 Name=TV Shadow Session Environment Sync
-Comment=Sincroniza DISPLAY e XAUTHORITY da sessao XFCE para anexacao do FreeRDP Shadow
-Exec=/bin/sh -c 'dbus-update-activation-environment --systemd DISPLAY XAUTHORITY 2>/dev/null || true'
+Comment=Sincroniza DISPLAY e XAUTHORITY da sessao XFCE para anexacao imediata do FreeRDP Shadow
+Exec=/bin/sh -c 'umask 077; printf "DISPLAY=%s\nXAUTHORITY=%s\n" "${DISPLAY:-:10.0}" "${XAUTHORITY:-$HOME/.Xauthority}" > "$HOME/.tv-shadow-env"; dbus-update-activation-environment --systemd DISPLAY XAUTHORITY 2>/dev/null || true'
 OnlyShowIn=XFCE;
 Terminal=false
 NoDisplay=true
 X-GNOME-Autostart-enabled=true
-
