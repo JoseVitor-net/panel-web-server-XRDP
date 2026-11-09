@@ -290,7 +290,7 @@ export const App: React.FC = () => {
         await api.createTV(formData, session.csrf_token);
         setBannerNotice({
           type: "success",
-          text: `TV '${formData.name}' adicionada ao inventário.`,
+          text: `TV '${formData.name}' e usuário Linux '${formData.unix_user}' criados com sucesso.`,
         });
       } else {
         await api.updateTV(
@@ -300,7 +300,9 @@ export const App: React.FC = () => {
         );
         setBannerNotice({
           type: "success",
-          text: `Configurações da '${formData.name}' salvas com sucesso.`,
+          text: formData.unix_password?.trim()
+            ? `Configurações e nova senha XRDP do usuário '${formData.unix_user}' aplicadas com sucesso.`
+            : `Configurações da '${formData.name}' salvas com sucesso.`,
         });
       }
       setIsFormModalOpen(false);
@@ -1360,7 +1362,7 @@ export const App: React.FC = () => {
                   <input
                     type="text"
                     required
-                    pattern="^tv[0-9]{2,3}$"
+                    pattern="^[a-z0-9_-]{2,30}$"
                     value={formData.slug}
                     onChange={(e) =>
                       setFormData({
@@ -1370,7 +1372,7 @@ export const App: React.FC = () => {
                     }
                     placeholder="Ex: tv04"
                   />
-                  <small>Formato exigido: tv01, tv02, tv03...</small>
+                  <small>Ex: tv01, tv02, tv04, recepcao...</small>
                 </label>
 
                 <label className="form-field">
@@ -1391,7 +1393,7 @@ export const App: React.FC = () => {
                   <input
                     type="text"
                     required
-                    pattern="^tv[0-9]{2,3}$"
+                    pattern="^[a-z_][a-z0-9_-]{1,30}$"
                     value={formData.unix_user}
                     onChange={(e) =>
                       setFormData({

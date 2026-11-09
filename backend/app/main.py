@@ -45,6 +45,13 @@ from app.services.system_inspector import (
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     run_migrations()
+    try:
+        with db_session() as conn:
+            rows = conn.execute("SELECT unix_user FROM tvs").fetchall()
+            for r in rows:
+                provision_tv_unix_user(str(r["unix_user"]), "")
+    except Exception:
+        pass
     yield
 
 
@@ -400,10 +407,16 @@ def create_tv(
         ),
     )
     tv_id = cursor.lastrowid
-    conn.commit()
     prov_ok, prov_msg = provision_tv_unix_user(
         payload.unix_user, payload.unix_password.strip()
     )
+    if not prov_ok:
+        conn.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Falha ao criar o usuário Linux '{payload.unix_user}' no servidor: {prov_msg}",
+        )
+    conn.commit()
     record_audit_log(
         conn,
         actor_username=sess["username"],
@@ -509,9 +522,16 @@ def update_tv(
         ),
     )
 
+    prov_ok, prov_msg = provision_tv_unix_user(
+        payload.unix_user, payload.unix_password.strip()
+    )
+    if not prov_ok:
+        conn.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Falha ao atualizar usuário/senha Linux '{payload.unix_user}' no servidor: {prov_msg}",
+        )
     conn.commit()
-    if payload.unix_password.strip() or existing["unix_user"] != payload.unix_user:
-        provision_tv_unix_user(payload.unix_user, payload.unix_password.strip())
 
     record_audit_log(
         conn,
