@@ -23,7 +23,7 @@ const GLYPHS: Record<Tone | "disabled" | "unknown", React.ReactNode> = {
   ),
 };
 
-/** Ícone de estado: a forma (não só a cor) distingue cada situação. */
+/** Ícone de estado: a forma (não só a cor) distingue cada situação (WCAG 1.4.1). */
 export const StateIcon: React.FC<{
   tone: Tone | "disabled" | "unknown";
   size?: number;
@@ -80,3 +80,31 @@ export const StatusBadge: React.FC<{
   </span>
 );
 
+/** Indicador de porta de rede estilo Switch Enterprise Gigabit (Link + Activity LEDs). */
+export const NetworkPortLed: React.FC<{
+  status: OverallStatus;
+  port: number;
+}> = ({ status, port }) => {
+  const isOnline = status === "online";
+  const isDegraded = status === "degraded";
+  return (
+    <span
+      className={`net-port-indicator status-${status}`}
+      title={`Porta TCP/IP 127.0.0.1:${port} • Link ${
+        isOnline ? "UP (1000BASE-T)" : isDegraded ? "ALERTA" : "DOWN"
+      }`}
+    >
+      <span className="net-port-txt">127.0.0.1:{port}</span>
+      <span className="net-led-cluster" aria-hidden="true">
+        <span
+          className={`net-led net-led-link ${
+            isOnline ? "led-up" : isDegraded ? "led-warn" : "led-down"
+          }`}
+        />
+        <span
+          className={`net-led net-led-act ${isOnline ? "led-active" : ""}`}
+        />
+      </span>
+    </span>
+  );
+};

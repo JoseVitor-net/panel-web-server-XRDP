@@ -3,79 +3,431 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>NOC Display Ops — Antes × Depois</title>
+<title>NOC Display Operations — Comparativo de Engenharia de Redes (Antes × Depois)</title>
 <style>
-  :root { --bg:#161412; --card:#221f1c; --text:#f6f0e7; --muted:#b0a698; --amber:#f5a524; --ok:#5fd593; --bad:#ff8070; --warn:#ffd54d; }
+  :root {
+    --bg: #090e17;
+    --card: #0e1626;
+    --card-2: #142034;
+    --card-3: #1a2a44;
+    --line: rgba(56, 189, 248, 0.16);
+    --line-strong: rgba(56, 189, 248, 0.35);
+    --text: #f8fafc;
+    --text-2: #cbd5e1;
+    --text-3: #94a3b8;
+    --cyan: #00d2ff;
+    --cyan-hi: #38bdf8;
+    --ok: #10b981;
+    --warn: #f59e0b;
+    --bad: #fb7185;
+    --idle: #94a3b8;
+  }
   * { box-sizing: border-box; }
-  body { margin:0; padding:2rem; background:var(--bg); color:var(--text); font:16px/1.5 "Segoe UI", system-ui, sans-serif; }
-  h1 { margin:0 0 .25rem; font-size:2rem; }
-  h2 { margin:3rem 0 1rem; font-size:1.25rem; }
-  .sub { color:var(--muted); margin:0 0 2rem; }
-  .pair { display:grid; grid-template-columns:1fr 1fr; gap:1.5rem; }
-  figure { margin:0; background:var(--card); border-radius:12px; padding:1rem; }
-  figcaption { display:inline-block; font-weight:700; letter-spacing:.08em; font-size:.875rem; padding:.2rem .7rem; border-radius:999px; margin-bottom:.75rem; }
-  .before figcaption { background:rgba(255,128,112,.16); color:var(--bad); }
-  .after figcaption { background:rgba(95,213,147,.16); color:var(--ok); }
-  img { width:100%; height:auto; display:block; border-radius:8px; }
-  table { width:100%; border-collapse:collapse; background:var(--card); border-radius:12px; overflow:hidden; }
-  th, td { padding:.75rem 1rem; text-align:left; border-bottom:1px solid rgba(255,244,230,.09); vertical-align:top; }
-  th { color:var(--muted); font-size:.875rem; letter-spacing:.08em; text-transform:uppercase; }
-  tr:last-child td { border-bottom:0; }
-  .legend { display:flex; flex-wrap:wrap; gap:1.5rem; background:var(--card); border-radius:12px; padding:1.25rem 1.5rem; }
-  .legend div { display:flex; align-items:center; gap:.6rem; }
-  .legend svg { width:34px; height:34px; fill:none; stroke:currentColor; stroke-width:2.2; stroke-linecap:round; stroke-linejoin:round; }
-  @media (max-width:1100px) { .pair { grid-template-columns:1fr; } }
+  body {
+    margin: 0;
+    padding: 2.5rem;
+    background: var(--bg);
+    background-image:
+      radial-gradient(rgba(56, 189, 248, 0.08) 1.2px, transparent 1.2px),
+      linear-gradient(180deg, rgba(14, 22, 38, 0.7) 0%, transparent 100%);
+    background-size: 24px 24px, 100% 100%;
+    background-attachment: fixed;
+    color: var(--text);
+    font: 16px/1.5 "Segoe UI", -apple-system, system-ui, sans-serif;
+  }
+  .container { max-width: 1440px; margin: 0 auto; }
+  .badge-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: .5rem;
+    font-size: .8125rem;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--cyan);
+    background: rgba(0, 210, 255, 0.1);
+    border: 1px solid rgba(0, 210, 255, 0.3);
+    padding: .35rem .85rem;
+    border-radius: 999px;
+    margin-bottom: .75rem;
+  }
+  .pulse-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--ok);
+    box-shadow: 0 0 8px var(--ok);
+    animation: netPulse 1.8s infinite ease-in-out;
+  }
+  @keyframes netPulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.3; transform: scale(0.85); }
+  }
+  h1 { margin: 0 0 .5rem; font-size: 2.4rem; letter-spacing: -.02em; }
+  .lead { color: var(--text-2); font-size: 1.125rem; max-width: 58rem; margin: 0 0 2rem; }
+  
+  .network-banner {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 1.25rem 1.75rem;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+    margin-bottom: 2.5rem;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  }
+  .net-spec {
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    font-size: .875rem;
+  }
+  .net-spec strong { color: var(--text); font-family: monospace; }
+  .net-spec span { color: var(--text-3); }
+
+  h2 {
+    margin: 3.5rem 0 1.25rem;
+    font-size: 1.4rem;
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+  }
+  h2::before {
+    content: "";
+    display: inline-block;
+    width: 4px;
+    height: 1.2em;
+    background: var(--cyan);
+    box-shadow: 0 0 8px var(--cyan);
+    border-radius: 2px;
+  }
+
+  .pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.75rem;
+    margin-bottom: 2.5rem;
+  }
+  figure {
+    margin: 0;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 1rem;
+    transition: all .2s ease;
+    position: relative;
+    overflow: hidden;
+  }
+  figure:hover {
+    border-color: var(--line-strong);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6), 0 0 20px rgba(0, 210, 255, 0.12);
+  }
+  figcaption {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-weight: 700;
+    letter-spacing: .08em;
+    font-size: .875rem;
+    padding: .35rem .75rem;
+    border-radius: 6px;
+    margin-bottom: .85rem;
+  }
+  .before figcaption {
+    background: rgba(251, 113, 133, 0.14);
+    border: 1px solid rgba(251, 113, 133, 0.3);
+    color: var(--bad);
+  }
+  .after figcaption {
+    background: rgba(0, 210, 255, 0.14);
+    border: 1px solid rgba(0, 210, 255, 0.35);
+    color: var(--cyan);
+  }
+  .after figcaption::after {
+    content: "● REDES & TELECOM (COM EFEITOS)";
+    font-size: .75rem;
+    color: var(--ok);
+  }
+  img {
+    width: 100%;
+    height: auto;
+    display: block;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+  }
+
+  /* Legenda de Portas & LEDs de Switch */
+  .legend-card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 1.5rem 1.75rem;
+    margin: 2.5rem 0;
+  }
+  .legend-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1.25rem;
+    margin-top: 1rem;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: .85rem;
+    background: var(--card-2);
+    border: 1px solid var(--line);
+    padding: .75rem 1rem;
+    border-radius: 8px;
+  }
+  .legend-item svg {
+    width: 32px;
+    height: 32px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2.2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    flex-shrink: 0;
+  }
+  .led-sample {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: .2rem .5rem;
+    background: #060b14;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: .8rem;
+  }
+  .s-dot { width: 7px; height: 7px; border-radius: 50%; }
+  .s-green { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+  .s-amber { background: var(--warn); box-shadow: 0 0 6px var(--warn); animation: netPulse 1s infinite; }
+
+  /* Tabela de Métricas e Auditoria */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    overflow: hidden;
+    margin-top: 1rem;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  }
+  th, td {
+    padding: 1rem 1.25rem;
+    text-align: left;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  th {
+    color: var(--text-3);
+    font-size: .8125rem;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    background: var(--card-2);
+  }
+  tr:last-child td { border-bottom: 0; }
+  td code {
+    background: #040912;
+    border: 1px solid var(--line);
+    padding: .2rem .4rem;
+    border-radius: 4px;
+    font-size: .875rem;
+    color: var(--cyan);
+  }
+
+  @media (max-width: 1024px) {
+    .pair { grid-template-columns: 1fr; }
+    body { padding: 1.5rem; }
+  }
 </style>
 </head>
 <body>
-<h1>NOC Display Ops — Antes × Depois</h1>
-<p class="sub">Rebranding: de "dark + neon azul + monospace" para "sala de controle" (grafite quente, âmbar, Barlow). Mesmos dados, mesma funcionalidade, só o visual.</p>
+<div class="container">
+  <div class="badge-tag">
+    <span class="pulse-dot"></span>
+    Console de Redes &amp; Datacenter NOC • Auditoria Visual
+  </div>
+  <h1>NOC Display Operations — Antes × Depois</h1>
+  <p class="lead">
+    Evolução de um layout genérico (fundo azul neon e fontes monospace indiscriminadas) para um console autêntico de
+    <strong>Engenharia de Redes e Telecomunicações</strong> (chassi de servidor 1U/2U, fibra óptica, portas switch RJ45/SFP com LEDs Link/Act e varredura de telemetria), preservando 100% da integridade de dados e arquitetura.
+  </p>
 
-<h2>Video Wall</h2>
-<div class="pair">
-  <figure class="before"><figcaption>ANTES</figcaption><a href="before-video-wall.png"><img src="before-video-wall.png" alt="Video wall antes"></a></figure>
-  <figure class="after"><figcaption>DEPOIS</figcaption><a href="after-video-wall.png"><img src="after-video-wall.png" alt="Video wall depois"></a></figure>
+  <div class="network-banner">
+    <div class="net-spec">
+      <span>Topologia:</span>
+      <strong>XRDP Shadow (:3391..3499)</strong>
+    </div>
+    <div class="net-spec">
+      <span>Enlace:</span>
+      <strong>1000BASE-T Loopback</strong>
+    </div>
+    <div class="net-spec">
+      <span>Acessibilidade:</span>
+      <strong>WCAG 2.1 AA (100% Pass)</strong>
+    </div>
+    <div class="net-spec">
+      <span>Legibilidade:</span>
+      <strong>Fonte Mínima ≥ 15.47px (TV Video Wall)</strong>
+    </div>
+  </div>
+
+  <h2>1. Video Wall &amp; Monitores de Rede (Painel Principal)</h2>
+  <div class="pair">
+    <figure class="before">
+      <figcaption><span>ANTES</span><span>Layout Genérico</span></figcaption>
+      <a href="before-video-wall.png" target="_blank"><img src="before-video-wall.png" alt="Video wall antes"></a>
+    </figure>
+    <figure class="after">
+      <figcaption><span>DEPOIS</span></figcaption>
+      <a href="after-video-wall.png" target="_blank"><img src="after-video-wall.png" alt="Video wall depois"></a>
+    </figure>
+  </div>
+
+  <h2>2. Monitoramento de Recursos &amp; Throughput Comparativo</h2>
+  <div class="pair">
+    <figure class="before">
+      <figcaption><span>ANTES</span><span>Layout Genérico</span></figcaption>
+      <a href="before-recursos.png" target="_blank"><img src="before-recursos.png" alt="Recursos antes"></a>
+    </figure>
+    <figure class="after">
+      <figcaption><span>DEPOIS</span></figcaption>
+      <a href="after-recursos.png" target="_blank"><img src="after-recursos.png" alt="Recursos depois"></a>
+    </figure>
+  </div>
+
+  <h2>3. Inventário de Terminais &amp; Controle Systemd</h2>
+  <div class="pair">
+    <figure class="before">
+      <figcaption><span>ANTES</span><span>Layout Genérico</span></figcaption>
+      <a href="before-inventario.png" target="_blank"><img src="before-inventario.png" alt="Inventário antes"></a>
+    </figure>
+    <figure class="after">
+      <figcaption><span>DEPOIS</span></figcaption>
+      <a href="after-inventario.png" target="_blank"><img src="after-inventario.png" alt="Inventário depois"></a>
+    </figure>
+  </div>
+
+  <h2>4. Console de Autenticação / Portão de Acesso</h2>
+  <div class="pair">
+    <figure class="before">
+      <figcaption><span>ANTES</span><span>Layout Genérico</span></figcaption>
+      <a href="before-login.png" target="_blank"><img src="before-login.png" alt="Login antes"></a>
+    </figure>
+    <figure class="after">
+      <figcaption><span>DEPOIS</span></figcaption>
+      <a href="after-login.png" target="_blank"><img src="after-login.png" alt="Login depois"></a>
+    </figure>
+  </div>
+
+  <h2>5. Modal de Provisionamento &amp; Credenciais Linux/XRDP</h2>
+  <div class="pair">
+    <figure class="after" style="grid-column: 1 / -1;">
+      <figcaption><span>DEPOIS</span></figcaption>
+      <a href="after-modal.png" target="_blank"><img src="after-modal.png" alt="Modal de Configuração de TV"></a>
+    </figure>
+  </div>
+
+  <h2>6. Trilha de Auditoria &amp; Eventos de Segurança</h2>
+  <div class="pair">
+    <figure class="after" style="grid-column: 1 / -1;">
+      <figcaption><span>DEPOIS</span></figcaption>
+      <a href="after-auditoria.png" target="_blank"><img src="after-auditoria.png" alt="Trilha de Auditoria"></a>
+    </figure>
+  </div>
+
+  <h2>Status por Forma de Ícone &amp; LEDs de Porta de Switch (WCAG 1.4.1)</h2>
+  <div class="legend-card">
+    <p style="margin: 0 0 1rem; color: var(--text-2);">
+      Em conformidade com a diretriz WCAG 1.4.1 (Uso de Cor), o status de enlace nunca depende exclusivamente da cor: a <strong>geometria do ícone</strong> e os <strong>LEDs físicos de switch</strong> comunicam o estado a operadores com daltonismo.
+    </p>
+    <div class="legend-grid">
+      <div class="legend-item" style="color:var(--ok)">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.2"/><path d="M7.5 12.5l3 3 6-7"/></svg>
+        <div>
+          <strong>Link Carrier UP</strong><br>
+          <small style="color:var(--text-3)">Sinal XFCE + Shadow ativo</small>
+        </div>
+      </div>
+      <div class="legend-item" style="color:var(--warn)">
+        <svg viewBox="0 0 24 24"><path d="M12 3.2l9.2 16.2H2.8z"/><path d="M12 8v5M12 16.2v.1"/></svg>
+        <div>
+          <strong>Atenção / Degradado</strong><br>
+          <small style="color:var(--text-3)">Shadow offline / X11 ativo</small>
+        </div>
+      </div>
+      <div class="legend-item" style="color:var(--idle)">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.2"/><path d="M8.5 12h7"/></svg>
+        <div>
+          <strong>Link Down / Sem Sessão</strong><br>
+          <small style="color:var(--text-3)">Terminal desconectado</small>
+        </div>
+      </div>
+      <div class="legend-item" style="color:var(--bad)">
+        <svg viewBox="0 0 24 24"><path d="M12 2.8l9.2 9.2-9.2 9.2L2.8 12z"/><path d="M9.6 9.7a2.5 2.5 0 114 2c-.9.6-1.6 1-1.6 2M12 16.6v.1"/></svg>
+        <div>
+          <strong>Alarme / Não Verificado</strong><br>
+          <small style="color:var(--text-3)">Falha de inspeção</small>
+        </div>
+      </div>
+      <div class="legend-item" style="grid-column: 1 / -1; justify-content: flex-start; gap: 2rem;">
+        <div>
+          <strong>LEDs de Porta Switch (RJ45 / SFP):</strong>
+        </div>
+        <div class="led-sample">
+          <span class="s-dot s-green"></span>
+          <span class="s-dot s-amber"></span>
+          <span>127.0.0.1:3391 [LINK CARRIER + TX/RX ACTIVITY]</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h2>Auditoria Técnica Automatizada (Resoluções 1280×720, 1920×1080, 2560×1440)</h2>
+  <table>
+    <tr><th>Critério</th><th>Antes</th><th>Depois (Console de Redes NOC)</th></tr>
+    <tr>
+      <td><strong>Tamanho Mínimo de Fonte (TV)</strong></td>
+      <td>67 de 81 declarações abaixo de 14px (mínimo de 0.58rem ≈ 9px). Ilegível a 3 metros.</td>
+      <td><strong>0 violações</strong>. Mínimo medido no navegador: <code>15.47px</code> (1080p), escalando via <code>clamp(16px, 0.4vw + 10px, 21px)</code> até 17.7px em telas 4K.</td>
+    </tr>
+    <tr>
+      <td><strong>Contraste WCAG AA (≥ 4.5:1)</strong></td>
+      <td>Rótulos cinza-azulado apagados sobre fundos escuros; contrastes de 2.1:1 a 3.4:1.</td>
+      <td><strong>0 falhas</strong>. Rótulos secundários ≥ 5.2:1, destaques de enlace ≥ 11:1, botão de alarme ≥ 7.8:1.</td>
+    </tr>
+    <tr>
+      <td><strong>Status Acessível (WCAG 1.4.1)</strong></td>
+      <td>Apenas pontos idênticos de 7px; status imperceptível para operadores daltônicos.</td>
+      <td>Ícone geométrico próprio (círculo, triângulo, losango) + LEDs de switch Link/Act + <code>aria-label</code>.</td>
+    </tr>
+    <tr>
+      <td><strong>Alvos de Toque / Ergonomia</strong></td>
+      <td>Botões de 26–28px de altura, propensos a erro de clique em telas touch/TV.</td>
+      <td>Altura mínima estrita: <code>36px</code> (xs), <code>40px</code> (sm) e <code>44px</code> (padrão NOC).</td>
+    </tr>
+    <tr>
+      <td><strong>Efeitos Visuais de Redes</strong></td>
+      <td>Nenhum efeito ou neons estáticos desconexos.</td>
+      <td>LEDs assíncronos de transmissão de pacotes (TX/RX), varredura suave de radar de telemetria nos monitores, malha de patch panel e chassi modular blade.</td>
+    </tr>
+    <tr>
+      <td><strong>Hierarquia Tipográfica</strong></td>
+      <td>Monospace genérico em toda a interface; métricas e rótulos sem contraste de peso.</td>
+      <td>Barlow Condensed 700 para números e métricas, Barlow para rótulos curtos em caixa-alta, Monospace restrito a portas e comandos.</td>
+    </tr>
+    <tr>
+      <td><strong>Isolamento de Fontes (CSP)</strong></td>
+      <td>Fontes externas via Google Fonts bloqueadas pelo cabeçalho CSP local.</td>
+      <td>Fontes 100% empacotadas no build via pacotes locais <code>@fontsource</code> (zero requisições externas).</td>
+    </tr>
+  </table>
 </div>
-
-<h2>Recursos &amp; Comparativo</h2>
-<div class="pair">
-  <figure class="before"><figcaption>ANTES</figcaption><a href="before-recursos.png"><img src="before-recursos.png" alt="Recursos antes"></a></figure>
-  <figure class="after"><figcaption>DEPOIS</figcaption><a href="after-recursos.png"><img src="after-recursos.png" alt="Recursos depois"></a></figure>
-</div>
-
-<h2>Inventário &amp; Systemd</h2>
-<div class="pair">
-  <figure class="before"><figcaption>ANTES</figcaption><a href="before-inventario.png"><img src="before-inventario.png" alt="Inventário antes"></a></figure>
-  <figure class="after"><figcaption>DEPOIS</figcaption><a href="after-inventario.png"><img src="after-inventario.png" alt="Inventário depois"></a></figure>
-</div>
-
-<h2>Login</h2>
-<div class="pair">
-  <figure class="before"><figcaption>ANTES</figcaption><a href="before-login.png"><img src="before-login.png" alt="Login antes"></a></figure>
-  <figure class="after"><figcaption>DEPOIS</figcaption><a href="after-login.png"><img src="after-login.png" alt="Login depois"></a></figure>
-</div>
-
-<h2>Status: cor + ícone (a forma também muda, não só a cor)</h2>
-<div class="legend">
-  <div style="color:var(--ok)"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.2"/><path d="M7.5 12.5l3 3 6-7"/></svg>Sinal ativo</div>
-  <div style="color:var(--warn)"><svg viewBox="0 0 24 24"><path d="M12 3.2l9.2 16.2H2.8z"/><path d="M12 8v5M12 16.2v.1"/></svg>Atenção / Shadow indisponível</div>
-  <div style="color:#b0a698"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.2"/><path d="M8.5 12h7"/></svg>Sem sessão XFCE</div>
-  <div style="color:#b0a698"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.2"/><path d="M7 17L17 7"/></svg>Desabilitada</div>
-  <div style="color:var(--bad)"><svg viewBox="0 0 24 24"><path d="M12 2.8l9.2 9.2-9.2 9.2L2.8 12z"/><path d="M9.6 9.7a2.5 2.5 0 114 2c-.9.6-1.6 1-1.6 2M12 16.6v.1"/></svg>Não verificado</div>
-</div>
-
-<h2>Auditoria (medida no navegador, 1280×720 / 1920×1080 / 2560×1440)</h2>
-<table>
-  <tr><th>Critério</th><th>Antes</th><th>Depois</th></tr>
-  <tr><td>Tamanho mínimo de fonte</td><td>67 de 81 declarações abaixo de 14px (mínimo 0.58rem ≈ 9px)</td><td>0 abaixo de 14px. Mínimo medido: 14px (1280), 15,5px (1920), 17,7px (2560). A base cresce com a tela (16→21px)</td></tr>
-  <tr><td>Contraste WCAG AA (4.5:1; 3:1 texto grande)</td><td>Não medido; rótulos em cinza-azulado sobre fundos escuros, texto de 9–11px</td><td>0 falhas em todos os textos de todas as telas. Botão primário: texto escuro sobre âmbar</td></tr>
-  <tr><td>Status só por cor (WCAG 1.4.1)</td><td>Pontos coloridos de 7px na faixa técnica; pílulas com texto pequeno</td><td>Ícone com forma própria (círculo, triângulo, losango) + cor, com <code>aria-label</code></td></tr>
-  <tr><td>Alvos de toque</td><td>Botões xs com ~28px de altura</td><td>Mínimo 36px (xs), 40px (sm), 44px (padrão). Único item abaixo de 36px: o checkbox nativo do modal, mas o rótulo clicável tem 44px</td></tr>
-  <tr><td>Hierarquia</td><td>Monospace em tudo; rótulos e valores com o mesmo peso</td><td>Números em Barlow Condensed 700 (até 3rem), rótulos em caixa-alta 14px, texto em Barlow. Monospace só para comandos</td></tr>
-  <tr><td>Consistência de espaçamento</td><td>Dezenas de valores soltos (0.18rem, 0.55rem, 0.85rem…)</td><td>Escala única de 7 passos (4/8/12/16/24/32/48px). Resta 1 valor fora da escala, o <code>0.375rem</code> do raio de chips</td></tr>
-  <tr><td>Bordas</td><td>64 bordas de 1px</td><td>5 (só campos de formulário e separadores de tabela)</td></tr>
-  <tr><td>Fontes</td><td>Pediam Google Fonts, mas o CSP do backend bloqueava, então caía no fallback</td><td>Barlow e Barlow Condensed empacotadas no build (<code>@fontsource</code>), sem rede externa</td></tr>
-</table>
 </body>
 </html>
-

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "./api";
 import { LiveShadowViewer } from "./components/LiveShadowViewer";
 import { MiniTvPreview } from "./components/MiniTvPreview";
-import { StateIcon, StatusBadge } from "./components/StatusIcons";
+import { NetworkPortLed, StateIcon, StatusBadge } from "./components/StatusIcons";
 import {
   AuditLogItem,
   AuthSession,
@@ -1128,9 +1128,10 @@ export const App: React.FC = () => {
                               ? `X11 ${rt.detected_display}`
                               : "X11 OFF"}
                           </span>
-                          <span className="monitor-chip">
-                            127.0.0.1:{tv.local_port}
-                          </span>
+                          <NetworkPortLed
+                            status={rt.overall_status}
+                            port={tv.local_port}
+                          />
                           {rt.viewer_connection_state === "connected" && (
                             <span className="monitor-live-tally">
                               ● EM EXIBIÇÃO ({rt.active_viewers_count})
