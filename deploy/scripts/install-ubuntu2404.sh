@@ -116,12 +116,20 @@ visudo -cf /etc/sudoers.d/tv-panel-admin
 install -m 0644 "${SRC_ROOT}/deploy/systemd/system/tv-shadow@.service" /etc/systemd/system/tv-shadow@.service
 install -m 0644 "${SRC_ROOT}/deploy/systemd/system/tv-panel-api.service" /etc/systemd/system/tv-panel-api.service
 install -m 0644 "${SRC_ROOT}/deploy/systemd/tv-shadow-session-hook.desktop" /etc/xdg/autostart/tv-shadow-session-hook.desktop
-install -m 0644 "${SRC_ROOT}/deploy/caddy/Caddyfile" /etc/caddy/Caddyfile
+install -m 0644 "${SRC_ROOT}/deploy/reverse-proxy/Caddyfile.example" /etc/caddy/Caddyfile
+
+# Se o UFW estiver ativo no Ubuntu 24.04 LTS, libera HTTPS (443), HTTP (80) e preserva XRDP (3389)
+if command -v ufw >/dev/null 2>&1 && ufw status | grep -q "Status: active"; then
+    ufw allow 443/tcp >/dev/null 2>&1 || true
+    ufw allow 80/tcp >/dev/null 2>&1 || true
+    ufw allow 3389/tcp >/dev/null 2>&1 || true
+fi
 
 systemctl daemon-reload
 systemctl enable --now tv-panel-api.service
+systemctl restart tv-panel-api.service
 systemctl enable --now caddy.service
-systemctl reload-or-restart caddy.service
+systemctl restart caddy.service
 
 for tv_user in tv01 tv02 tv03; do
     if id -u "${tv_user}" >/dev/null 2>&1; then

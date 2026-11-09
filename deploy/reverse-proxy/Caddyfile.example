@@ -2,8 +2,10 @@
 # Reverse Proxy HTTPS com Caddy para o Painel de TVs e túnel WebSocket Guacamole.
 # Para rede interna sem domínio público, "tls internal" emite certificado da CA local do Caddy.
 
-painel-tv.seudominio.interno {
-    tls internal
+:443 {
+    tls internal {
+        on_demand
+    }
 
     encode zstd gzip
 
