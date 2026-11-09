@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api, ApiError } from "./api";
 import { LiveShadowViewer } from "./components/LiveShadowViewer";
+import { MiniTvPreview } from "./components/MiniTvPreview";
 import {
   AuditLogItem,
   AuthSession,
@@ -1136,23 +1137,55 @@ export const App: React.FC = () => {
                         </div>
 
                         <div className="monitor-center">
-                          {canWatch ? (
-                            <div className="monitor-ready-cta">
-                              <div className="play-circle">
-                                <svg
-                                  viewBox="0 0 24 24"
-                                  width="24"
-                                  height="24"
-                                  fill="currentColor"
-                                >
-                                  <polygon points="6 3 20 12 6 21 6 3" />
-                                </svg>
+                          {canWatch && activeViewerTv?.id !== tv.id ? (
+                            <MiniTvPreview
+                              tv={tv}
+                              csrfToken={session.csrf_token}
+                            />
+                          ) : rt.xfce_session_state === "active" ? (
+                            <div className="vbox-synthetic-desktop">
+                              <div className="vbox-top-panel">
+                                <span className="vbox-panel-pill">
+                                  XFCE4 Desktop
+                                </span>
+                                <span className="vbox-panel-clock">
+                                  {rt.detected_display || ":10.0"} •{" "}
+                                  {tv.unix_user}
+                                </span>
                               </div>
-                              <strong>Abrir Espelhamento ao Vivo</strong>
-                              <small>
-                                Sessão XFCE ativa ({rt.detected_display || ":10.0"}) •{" "}
-                                {tv.sec_mode.toUpperCase()} 1080p
-                              </small>
+                              <div className="vbox-window-mock">
+                                <div className="vbox-win-titlebar">
+                                  <span className="vbox-win-dots">
+                                    <i />
+                                    <i />
+                                    <i />
+                                  </span>
+                                  <span>
+                                    {statusLabel(
+                                      rt.overall_status,
+                                      rt.shadow_service_state
+                                    )}
+                                  </span>
+                                </div>
+                                <div className="vbox-win-body">
+                                  <div className="vbox-win-stat">
+                                    <span>CPU</span>
+                                    <strong>
+                                      {(rt.cpu_percent ?? 0).toFixed(1)}%
+                                    </strong>
+                                  </div>
+                                  <div className="vbox-win-stat">
+                                    <span>RAM</span>
+                                    <strong>
+                                      {(rt.memory_mb ?? 0).toFixed(0)} MB
+                                    </strong>
+                                  </div>
+                                  <div className="vbox-win-stat">
+                                    <span>Proc</span>
+                                    <strong>{rt.process_count ?? 0}</strong>
+                                  </div>
+                                </div>
+                              </div>
                             </div>
                           ) : (
                             <div className="monitor-offline-state">
@@ -1174,7 +1207,12 @@ export const App: React.FC = () => {
                                 <line x1="2" y1="3" x2="22" y2="17" />
                                 <line x1="8" y1="21" x2="16" y2="21" />
                               </svg>
-                              <strong>{statusLabel(rt.overall_status, rt.shadow_service_state)}</strong>
+                              <strong>
+                                {statusLabel(
+                                  rt.overall_status,
+                                  rt.shadow_service_state
+                                )}
+                              </strong>
                               <small>{rt.user_message}</small>
                             </div>
                           )}

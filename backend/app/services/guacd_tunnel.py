@@ -89,7 +89,9 @@ def split_complete_guac_instructions(buffer: str) -> tuple[str, str]:
     return buffer[:last_complete_end], buffer[last_complete_end:]
 
 
-def build_rdp_connection_params(tv_row: dict[str, Any], width: int, height: int) -> dict[str, str]:
+def build_rdp_connection_params(
+    tv_row: dict[str, Any], width: int, height: int, read_only: bool = False
+) -> dict[str, str]:
     """
     Constrói os parâmetros seguros de conexão RDP entre guacd e o FreeRDP Shadow local.
     O navegador nunca fornece host, porta ou argumentos de sistema: todos vêm do registro validado no banco.
@@ -104,6 +106,7 @@ def build_rdp_connection_params(tv_row: dict[str, Any], width: int, height: int)
         "security": "nla" if sec_mode == "nla" else "any",
         "ignore-cert": "true",
         "disable-auth": "false" if tv_row.get("shadow_auth_enabled") else "true",
+        "read-only": "true" if read_only else "false",
         "width": str(max(640, min(width, 3840))),
         "height": str(max(360, min(height, 2160))),
         "dpi": "96",
@@ -123,6 +126,7 @@ async def run_guacd_websocket_tunnel(
     width: int = 1920,
     height: int = 1080,
     send_initial_uuid: bool = True,
+    read_only: bool = False,
 ) -> None:
     """
     Estabelece o handshake do protocolo Guacamole com o daemon local guacd (127.0.0.1:4822)
@@ -195,7 +199,9 @@ async def run_guacd_websocket_tunnel(
             raise RuntimeError("Resposta inesperada do guacd ao iniciar protocolo RDP.")
 
         expected_arg_names = args_instruction[1:]
-        rdp_params = build_rdp_connection_params(tv_row, width=width, height=height)
+        rdp_params = build_rdp_connection_params(
+            tv_row, width=width, height=height, read_only=read_only
+        )
 
         # 3. Envia size, audio, video, image e connect na sequência exigida pelo guacd
         handshake_payload = (

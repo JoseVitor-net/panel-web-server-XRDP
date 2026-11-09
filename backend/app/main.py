@@ -647,6 +647,7 @@ async def tv_guacamole_websocket(
     csrf_token: str = Query(default=""),
     width: int = Query(default=1920, ge=640, le=3840),
     height: int = Query(default=1080, ge=360, le=2160),
+    preview: int = Query(default=0),
 ):
     settings = get_settings()
     session_id = websocket.cookies.get(settings.session_cookie_name)
@@ -713,42 +714,51 @@ async def tv_guacamole_websocket(
 
         actor_username = str(sess["username"])
         client_host = websocket.client.host if websocket.client else "unknown"
-        try:
-            record_audit_log(
-                conn,
-                actor_username=actor_username,
-                ip_address=client_host,
-                action="viewer.connect",
-                target_type="tv",
-                target_id=tv_dict["slug"],
-                outcome="success",
-                details={"local_port": tv_dict["local_port"]},
-            )
-            conn.commit()
-        except Exception:
-            pass
-    finally:
-        conn.close()
-
-    register_ws_viewer(tv_id)
-    try:
-        await run_guacd_websocket_tunnel(
-            websocket, tv_dict, width=width, height=height, send_initial_uuid=False
-        )
-    finally:
-        unregister_ws_viewer(tv_id)
-        try:
-            with db_session() as audit_conn:
+        is_preview = bool(preview == 1)
+        if not is_preview:
+            try:
                 record_audit_log(
-                    audit_conn,
+                    conn,
                     actor_username=actor_username,
                     ip_address=client_host,
-                    action="viewer.disconnect",
+                    action="viewer.connect",
                     target_type="tv",
                     target_id=tv_dict["slug"],
                     outcome="success",
                     details={"local_port": tv_dict["local_port"]},
                 )
-        except Exception:
-            pass
+                conn.commit()
+            except Exception:
+                pass
+    finally:
+        conn.close()
+
+    if not is_preview:
+        register_ws_viewer(tv_id)
+    try:
+        await run_guacd_websocket_tunnel(
+            websocket,
+            tv_dict,
+            width=width,
+            height=height,
+            send_initial_uuid=False,
+            read_only=is_preview,
+        )
+    finally:
+        if not is_preview:
+            unregister_ws_viewer(tv_id)
+            try:
+                with db_session() as audit_conn:
+                    record_audit_log(
+                        audit_conn,
+                        actor_username=actor_username,
+                        ip_address=client_host,
+                        action="viewer.disconnect",
+                        target_type="tv",
+                        target_id=tv_dict["slug"],
+                        outcome="success",
+                        details={"local_port": tv_dict["local_port"]},
+                    )
+            except Exception:
+                pass
 
