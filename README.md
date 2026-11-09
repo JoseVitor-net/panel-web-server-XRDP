@@ -93,7 +93,7 @@ sudo systemctl enable --now xrdp
 
 ### Passo 1: Clonar o repositório e pré-inspecionar o ambiente
 ```bash
-sudo git clone https://github.com/Nukito22/server-rdp.git /opt/server-rdp
+sudo git clone https://github.com/JoseVitor-net/panel-web-server-XRDP.git /opt/server-rdp
 cd /opt/server-rdp
 bash deploy/scripts/verify-shadow-auth.sh
 ```
