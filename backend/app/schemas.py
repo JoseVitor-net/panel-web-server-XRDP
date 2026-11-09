@@ -127,6 +127,43 @@ class TVRuntimeState(BaseModel):
     port_conflict_detail: str | None
     user_message: str
     last_checked_at: str
+    cpu_percent: float = 0.0
+    memory_mb: float = 0.0
+    memory_percent: float = 0.0
+    process_count: int = 0
+    shadow_cpu_percent: float = 0.0
+    shadow_memory_mb: float = 0.0
+
+
+class SystemOverviewTelemetry(BaseModel):
+    hostname: str
+    cpu_cores: int
+    cpu_percent: float
+    load_avg_1m: float
+    load_avg_5m: float
+    load_avg_15m: float
+    mem_total_mb: float
+    mem_used_mb: float
+    mem_available_mb: float
+    mem_percent: float
+    swap_total_mb: float
+    swap_used_mb: float
+    swap_percent: float
+    disk_total_gb: float
+    disk_used_gb: float
+    disk_percent: float
+    uptime_seconds: int
+    tvs_total_cpu_percent: float
+    tvs_total_memory_mb: float
+    tvs_total_memory_percent: float
+    other_system_cpu_percent: float
+    other_system_memory_mb: float
+    other_system_memory_percent: float
+    active_tv_sessions_count: int
+    avg_tv_cpu_percent: float
+    avg_tv_memory_mb: float
+    estimated_extra_tvs_capacity: int
+    timestamp: str
 
 
 class TVResponse(BaseModel):

@@ -16,6 +16,7 @@ from app.schemas import (
     AuditLogItem,
     AuthSessionResponse,
     LoginRequest,
+    SystemOverviewTelemetry,
     TVCreateRequest,
     TVResponse,
     TVServiceActionRequest,
@@ -34,6 +35,7 @@ from app.services.guacd_tunnel import encode_guac_instruction, run_guacd_websock
 from app.services.system_inspector import (
     build_shadow_flags_preview,
     control_tv_shadow_service,
+    inspect_system_overview,
     inspect_tv_runtime,
     invalidate_runtime_cache,
     provision_tv_unix_user,
@@ -331,6 +333,16 @@ def get_me(
         expires_at=sess["expires_at"],
         env_mode=settings.env_mode,
     )
+
+
+@app.get("/api/system/telemetry", response_model=SystemOverviewTelemetry)
+def get_system_telemetry(
+    request: Request,
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    get_authenticated_session(conn, request, require_csrf=False)
+    rows = conn.execute("SELECT * FROM tvs ORDER BY local_port ASC").fetchall()
+    return inspect_system_overview([dict(r) for r in rows])
 
 
 @app.get("/api/tvs", response_model=list[TVResponse])

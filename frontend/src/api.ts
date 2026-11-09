@@ -1,4 +1,10 @@
-import { AuditLogItem, AuthSession, TVFormPayload, TVItem } from "./types";
+import {
+  AuditLogItem,
+  AuthSession,
+  SystemOverviewTelemetry,
+  TVFormPayload,
+  TVItem,
+} from "./types";
 
 export class ApiError extends Error {
   status: number;
@@ -73,6 +79,10 @@ export const api = {
 
   listTVs(): Promise<TVItem[]> {
     return requestJson<TVItem[]>("/api/tvs");
+  },
+
+  getSystemTelemetry(): Promise<SystemOverviewTelemetry> {
+    return requestJson<SystemOverviewTelemetry>("/api/system/telemetry");
   },
 
   getTV(id: number): Promise<TVItem> {

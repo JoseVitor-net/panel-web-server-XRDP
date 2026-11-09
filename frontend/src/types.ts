@@ -23,6 +23,43 @@ export interface TVRuntimeState {
   port_conflict_detail: string | null;
   user_message: string;
   last_checked_at: string;
+  cpu_percent: number;
+  memory_mb: number;
+  memory_percent: number;
+  process_count: number;
+  shadow_cpu_percent: number;
+  shadow_memory_mb: number;
+}
+
+export interface SystemOverviewTelemetry {
+  hostname: string;
+  cpu_cores: number;
+  cpu_percent: number;
+  load_avg_1m: number;
+  load_avg_5m: number;
+  load_avg_15m: number;
+  mem_total_mb: number;
+  mem_used_mb: number;
+  mem_available_mb: number;
+  mem_percent: number;
+  swap_total_mb: number;
+  swap_used_mb: number;
+  swap_percent: number;
+  disk_total_gb: number;
+  disk_used_gb: number;
+  disk_percent: number;
+  uptime_seconds: number;
+  tvs_total_cpu_percent: number;
+  tvs_total_memory_mb: number;
+  tvs_total_memory_percent: number;
+  other_system_cpu_percent: number;
+  other_system_memory_mb: number;
+  other_system_memory_percent: number;
+  active_tv_sessions_count: number;
+  avg_tv_cpu_percent: number;
+  avg_tv_memory_mb: number;
+  estimated_extra_tvs_capacity: number;
+  timestamp: string;
 }
 
 export interface TVItem {

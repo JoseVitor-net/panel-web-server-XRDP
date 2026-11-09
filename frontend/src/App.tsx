@@ -5,6 +5,7 @@ import {
   AuditLogItem,
   AuthSession,
   OverallStatus,
+  SystemOverviewTelemetry,
   TVFormPayload,
   TVItem,
 } from "./types";
@@ -116,12 +117,14 @@ export const App: React.FC = () => {
     text: string;
   } | null>(null);
 
-  const [activeTab, setActiveTab] = useState<"dashboard" | "admin" | "audit">(
-    "dashboard"
-  );
+  const [activeTab, setActiveTab] = useState<
+    "dashboard" | "resources" | "admin" | "audit"
+  >("dashboard");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [activeViewerTv, setActiveViewerTv] = useState<TVItem | null>(null);
+  const [sysTelemetry, setSysTelemetry] =
+    useState<SystemOverviewTelemetry | null>(null);
 
   const [isFormModalOpen, setIsFormModalOpen] = useState<boolean>(false);
   const [editingTvId, setEditingTvId] = useState<number | null>(null);
@@ -139,8 +142,14 @@ export const App: React.FC = () => {
       setTvsLoading(true);
     }
     try {
-      const list = await api.listTVs();
+      const [list, sys] = await Promise.all([
+        api.listTVs(),
+        api.getSystemTelemetry().catch(() => null),
+      ]);
       setTvs(list);
+      if (sys) {
+        setSysTelemetry(sys);
+      }
       setApiFetchFailed(null);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
@@ -484,13 +493,13 @@ export const App: React.FC = () => {
                 </svg>
               </div>
               <span className="security-tag">
-                DEBIAN 13 TRIXIE • XRDP SHADOW NOC
+                XRDP SHADOW NOC • CONSOLE DE OPERAÇÕES
               </span>
             </div>
             <h1>NOC Display Operations</h1>
             <p>
-              Console central de monitoramento e espelhamento em tempo real de
-              sessões XFCE via FreeRDP 3 Shadow &amp; Apache Guacamole.
+              Console central de monitoramento, telemetria de recursos e espelhamento em tempo real de
+              sessões XFCE via FreeRDP Shadow &amp; Apache Guacamole.
             </p>
           </div>
 
@@ -581,6 +590,24 @@ export const App: React.FC = () => {
             <span className="sidebar-badge">
               {stats.online}/{stats.total}
             </span>
+          </button>
+
+          <button
+            type="button"
+            className={`sidebar-link ${activeTab === "resources" ? "active" : ""}`}
+            onClick={() => setActiveTab("resources")}
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.85">
+              <line x1="18" y1="20" x2="18" y2="10" />
+              <line x1="12" y1="20" x2="12" y2="4" />
+              <line x1="6" y1="20" x2="6" y2="14" />
+            </svg>
+            <span>Recursos &amp; Comparativo</span>
+            {sysTelemetry && (
+              <span className="sidebar-badge sidebar-badge-neutral">
+                {sysTelemetry.cpu_percent.toFixed(0)}%
+              </span>
+            )}
           </button>
 
           <button
@@ -690,11 +717,11 @@ export const App: React.FC = () => {
         <header className="workspace-topbar">
           <div className="topbar-left">
             <div className="topbar-breadcrumb">
-              <span> Debian 13 Server</span>
-              <span>/</span>
               <strong>
                 {activeTab === "dashboard"
                   ? "Video Wall & Monitoramento"
+                  : activeTab === "resources"
+                  ? "Monitoramento de Recursos & Comparativo de Sessões"
                   : activeTab === "admin"
                   ? "Inventário & Controle Systemd"
                   : "Auditoria & Eventos de Segurança"}
@@ -834,6 +861,136 @@ export const App: React.FC = () => {
               </div>
             </div>
           </section>
+
+          {/* Faixa de Telemetria de Recursos do Sistema vs Sessões das TVs */}
+          {sysTelemetry && (
+            <section
+              className="system-resource-banner"
+              aria-label="Consumo de recursos do sistema e sessões"
+            >
+              <div className="sys-res-col">
+                <div className="sys-res-top">
+                  <span className="sys-res-title">
+                    CPU DO SERVIDOR ({sysTelemetry.cpu_cores} NÚCLEOS)
+                  </span>
+                  <strong className="sys-res-val">
+                    {sysTelemetry.cpu_percent.toFixed(1)}%{" "}
+                    <small>
+                      Load {sysTelemetry.load_avg_1m.toFixed(2)} /{" "}
+                      {sysTelemetry.load_avg_5m.toFixed(2)}
+                    </small>
+                  </strong>
+                </div>
+                <div className="stacked-bar" title="Azul: Sessões das TVs | Roxo: Sistema/Outros">
+                  <div
+                    className="stacked-seg seg-tvs"
+                    style={{
+                      width: `${Math.min(100, sysTelemetry.tvs_total_cpu_percent)}%`,
+                    }}
+                  />
+                  <div
+                    className="stacked-seg seg-sys"
+                    style={{
+                      width: `${Math.min(
+                        100 - Math.min(100, sysTelemetry.tvs_total_cpu_percent),
+                        sysTelemetry.other_system_cpu_percent
+                      )}%`,
+                    }}
+                  />
+                </div>
+                <div className="sys-res-legend">
+                  <span>
+                    <i className="leg-dot leg-tvs" /> TVs em Conjunto:{" "}
+                    <strong>{sysTelemetry.tvs_total_cpu_percent.toFixed(1)}%</strong>
+                  </span>
+                  <span>
+                    <i className="leg-dot leg-sys" /> Sistema/Base:{" "}
+                    <strong>{sysTelemetry.other_system_cpu_percent.toFixed(1)}%</strong>
+                  </span>
+                </div>
+              </div>
+
+              <div className="sys-res-col">
+                <div className="sys-res-top">
+                  <span className="sys-res-title">MEMÓRIA RAM GLOBAL</span>
+                  <strong className="sys-res-val">
+                    {sysTelemetry.mem_used_mb.toFixed(0)} /{" "}
+                    {sysTelemetry.mem_total_mb.toFixed(0)} MB{" "}
+                    <small>({sysTelemetry.mem_percent.toFixed(1)}%)</small>
+                  </strong>
+                </div>
+                <div className="stacked-bar" title="Azul: Sessões das TVs | Roxo: Sistema/Outros">
+                  <div
+                    className="stacked-seg seg-tvs"
+                    style={{
+                      width: `${Math.min(100, sysTelemetry.tvs_total_memory_percent)}%`,
+                    }}
+                  />
+                  <div
+                    className="stacked-seg seg-sys"
+                    style={{
+                      width: `${Math.min(
+                        100 - Math.min(100, sysTelemetry.tvs_total_memory_percent),
+                        sysTelemetry.other_system_memory_percent
+                      )}%`,
+                    }}
+                  />
+                </div>
+                <div className="sys-res-legend">
+                  <span>
+                    <i className="leg-dot leg-tvs" /> TVs em Conjunto:{" "}
+                    <strong>
+                      {sysTelemetry.tvs_total_memory_mb.toFixed(0)} MB (
+                      {sysTelemetry.tvs_total_memory_percent.toFixed(1)}%)
+                    </strong>
+                  </span>
+                  <span>
+                    <i className="leg-dot leg-sys" /> Sistema/Base:{" "}
+                    <strong>
+                      {sysTelemetry.other_system_memory_mb.toFixed(0)} MB (
+                      {sysTelemetry.other_system_memory_percent.toFixed(1)}%)
+                    </strong>
+                  </span>
+                </div>
+              </div>
+
+              <div className="sys-res-col sys-res-col-summary">
+                <div className="sys-res-top">
+                  <span className="sys-res-title">MÉDIA POR TV &amp; CAPACIDADE</span>
+                  <strong className="sys-res-val">
+                    +{sysTelemetry.estimated_extra_tvs_capacity} TVs{" "}
+                    <small>folga estimada</small>
+                  </strong>
+                </div>
+                <div className="sys-res-legend sys-res-meta-row">
+                  <span>
+                    Média/TV ativa:{" "}
+                    <strong>
+                      {sysTelemetry.avg_tv_cpu_percent.toFixed(1)}% CPU •{" "}
+                      {sysTelemetry.avg_tv_memory_mb.toFixed(0)} MB RAM
+                    </strong>
+                  </span>
+                  <span>
+                    Disco (/):{" "}
+                    <strong>
+                      {sysTelemetry.disk_used_gb.toFixed(1)}/
+                      {sysTelemetry.disk_total_gb.toFixed(1)} GB (
+                      {sysTelemetry.disk_percent.toFixed(0)}%)
+                    </strong>
+                  </span>
+                </div>
+                {activeTab !== "resources" && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-xs sys-compare-btn"
+                    onClick={() => setActiveTab("resources")}
+                  >
+                    Ver Comparativo Entre Sessões →
+                  </button>
+                )}
+              </div>
+            </section>
+          )}
 
           {activeTab === "dashboard" && (
             <>
@@ -1082,6 +1239,52 @@ export const App: React.FC = () => {
                         </div>
                       </div>
 
+                      {/* Consumo de Recursos da Sessão da TV + Comparação com a Média */}
+                      <div className="tv-resource-strip">
+                        <div className="tv-res-metric">
+                          <div className="tv-res-label-row">
+                            <span>CPU Sessão ({tv.unix_user})</span>
+                            <strong>{(rt.cpu_percent ?? 0).toFixed(1)}%</strong>
+                          </div>
+                          <div className="tv-mini-bar">
+                            <div
+                              className="tv-mini-fill fill-cpu"
+                              style={{
+                                width: `${Math.min(100, Math.max(2, rt.cpu_percent || 0))}%`,
+                              }}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="tv-res-metric">
+                          <div className="tv-res-label-row">
+                            <span>RAM Sessão</span>
+                            <strong>
+                              {(rt.memory_mb ?? 0).toFixed(0)} MB{" "}
+                              <small>({(rt.memory_percent ?? 0).toFixed(1)}%)</small>
+                            </strong>
+                          </div>
+                          <div className="tv-mini-bar">
+                            <div
+                              className="tv-mini-fill fill-ram"
+                              style={{
+                                width: `${Math.min(
+                                  100,
+                                  Math.max(2, (rt.memory_percent || 0) * 3)
+                                )}%`,
+                              }}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="tv-res-meta">
+                          <span>{rt.process_count ?? 0} proc</span>
+                          <span>
+                            Shadow: {(rt.shadow_memory_mb ?? 0).toFixed(0)} MB
+                          </span>
+                        </div>
+                      </div>
+
                       {/* Barra de Ações do Cartão */}
                       <div className="tv-card-footer">
                         <button
@@ -1140,6 +1343,191 @@ export const App: React.FC = () => {
                 })}
               </section>
             </>
+          )}
+
+          {activeTab === "resources" && (
+            <section className="admin-panel" aria-label="Comparativo de Recursos">
+              <div className="panel-header">
+                <div>
+                  <h2>
+                    Comparativo de Recursos: Sessões das TVs vs. Sistema Global
+                  </h2>
+                  <p className="panel-subtitle">
+                    Análise em tempo real do consumo individual de cada sessão
+                    gráfica (XFCE + FreeRDP Shadow) e comparação proporcional
+                    com a capacidade total do servidor.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => void loadTVs(false)}
+                >
+                  Atualizar Telemetria
+                </button>
+              </div>
+
+              {sysTelemetry && (
+                <div className="comparison-summary-grid">
+                  <div className="comp-box">
+                    <span className="comp-label">SOMA DAS SESSÕES DE TV</span>
+                    <strong className="comp-val">
+                      {sysTelemetry.tvs_total_memory_mb.toFixed(0)} MB RAM •{" "}
+                      {sysTelemetry.tvs_total_cpu_percent.toFixed(1)}% CPU
+                    </strong>
+                    <small>
+                      {sysTelemetry.active_tv_sessions_count} sessões ativas (
+                      {sysTelemetry.tvs_total_memory_percent.toFixed(1)}% da RAM
+                      do servidor)
+                    </small>
+                  </div>
+
+                  <div className="comp-box">
+                    <span className="comp-label">SISTEMA OPERACIONAL &amp; BASE</span>
+                    <strong className="comp-val">
+                      {sysTelemetry.other_system_memory_mb.toFixed(0)} MB RAM •{" "}
+                      {sysTelemetry.other_system_cpu_percent.toFixed(1)}% CPU
+                    </strong>
+                    <small>
+                      Kernel, XRDP (:3389), Guacd (:4822), Caddy e serviços base (
+                      {sysTelemetry.other_system_memory_percent.toFixed(1)}% da
+                      RAM)
+                    </small>
+                  </div>
+
+                  <div className="comp-box">
+                    <span className="comp-label">RECURSOS LIVRES / HEADROOM</span>
+                    <strong className="comp-val">
+                      {sysTelemetry.mem_available_mb.toFixed(0)} MB RAM Livre •{" "}
+                      {Math.max(0, 100 - sysTelemetry.cpu_percent).toFixed(1)}%
+                      CPU Livre
+                    </strong>
+                    <small>
+                      Suporta aprox.{" "}
+                      <strong>+{sysTelemetry.estimated_extra_tvs_capacity} TVs</strong>{" "}
+                      adicionais com o perfil atual
+                    </small>
+                  </div>
+                </div>
+              )}
+
+              <div className="table-responsive">
+                <table className="admin-table">
+                  <thead>
+                    <tr>
+                      <th>TV / Sessão</th>
+                      <th>Estado</th>
+                      <th>CPU da Sessão</th>
+                      <th>RAM Total da Sessão</th>
+                      <th>Desktop XFCE vs. Shadow</th>
+                      <th>Processos</th>
+                      <th>Comparativo vs. Média</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tvs.map((tv) => {
+                      const rt = tv.runtime;
+                      const cpu = rt.cpu_percent || 0;
+                      const memMb = rt.memory_mb || 0;
+                      const memPct = rt.memory_percent || 0;
+                      const shMem = rt.shadow_memory_mb || 0;
+                      const xfceMem = Math.max(0, memMb - shMem);
+                      const avgMem = sysTelemetry?.avg_tv_memory_mb || 0;
+                      const diffPct =
+                        avgMem > 0 && memMb > 0
+                          ? ((memMb - avgMem) / avgMem) * 100
+                          : 0;
+
+                      return (
+                        <tr key={tv.id}>
+                          <td>
+                            <strong>{tv.name}</strong>{" "}
+                            <span className="mono-badge">{tv.unix_user}</span>
+                          </td>
+                          <td>
+                            <span
+                              className={`status-pill status-${rt.overall_status}`}
+                            >
+                              <span className="status-pill-dot" />
+                              {statusLabel(
+                                rt.overall_status,
+                                rt.shadow_service_state
+                              )}
+                            </span>
+                          </td>
+                          <td style={{ minWidth: 160 }}>
+                            <div className="table-bar-wrap">
+                              <div className="table-bar-top">
+                                <strong>{cpu.toFixed(1)}%</strong>
+                                <small>
+                                  Shadow: {(rt.shadow_cpu_percent || 0).toFixed(1)}%
+                                </small>
+                              </div>
+                              <div className="tv-mini-bar">
+                                <div
+                                  className="tv-mini-fill fill-cpu"
+                                  style={{
+                                    width: `${Math.min(100, Math.max(2, cpu * 2))}%`,
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          </td>
+                          <td style={{ minWidth: 180 }}>
+                            <div className="table-bar-wrap">
+                              <div className="table-bar-top">
+                                <strong>{memMb.toFixed(0)} MB</strong>
+                                <small>{memPct.toFixed(1)}% do servidor</small>
+                              </div>
+                              <div className="tv-mini-bar">
+                                <div
+                                  className="tv-mini-fill fill-ram"
+                                  style={{
+                                    width: `${Math.min(
+                                      100,
+                                      Math.max(2, memPct * 3)
+                                    )}%`,
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          </td>
+                          <td>
+                            <code>
+                              XFCE: {xfceMem.toFixed(0)} MB | Shadow:{" "}
+                              {shMem.toFixed(0)} MB
+                            </code>
+                          </td>
+                          <td>
+                            <strong>{rt.process_count || 0}</strong> proc
+                          </td>
+                          <td>
+                            {memMb === 0 ? (
+                              <span className="comp-tag comp-tag-neutral">
+                                Sem consumo (Offline)
+                              </span>
+                            ) : Math.abs(diffPct) <= 10 ? (
+                              <span className="comp-tag comp-tag-ok">
+                                Na média ({diffPct >= 0 ? "+" : ""}
+                                {diffPct.toFixed(0)}%)
+                              </span>
+                            ) : diffPct > 10 ? (
+                              <span className="comp-tag comp-tag-high">
+                                +{diffPct.toFixed(0)}% acima da média
+                              </span>
+                            ) : (
+                              <span className="comp-tag comp-tag-low">
+                                {diffPct.toFixed(0)}% abaixo da média (Mais leve)
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
           )}
 
           {activeTab === "admin" && (
