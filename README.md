@@ -1,163 +1,112 @@
-# 🖥️ NOC Display Operations — Painel Web de Espelhamento e Gerenciamento XRDP / XFCE Shadow
+# 🖥️ NOC Display Ops — Painel Web de Espelhamento e Gerenciamento XRDP / XFCE
 
-Console web completo (**FastAPI + SQLite + React/TypeScript + Apache Guacamole HTML5 + Systemd**) para monitorar, gerenciar e espelhar em tempo real pelo navegador as sessões gráficas **XFCE4** de TVs corporativas conectadas via **XRDP**, sem criar novas sessões gráficas e sem interferir na porta `3389`.
+Painel web centralizado para **monitorar, gerenciar e espelhar em tempo real pelo navegador** as sessões gráficas de TVs corporativas conectadas via **XRDP** em servidores Linux (Ubuntu e Debian), com **zero interferência na TV física** e sem criar novas sessões gráficas.
 
 Compatível nativamente com **Ubuntu 22.04 LTS / 24.04 LTS** e **Debian 12 ("Bookworm") / Debian 13 ("Trixie")**.
 
-> 📊 **Design & Acessibilidade NOC**: Interface em padrão *sala de controle profissional* (grafite quente, tipografia Barlow, contraste WCAG AA e status com diferenciação por forma de ícone + cor). Veja o [comparativo visual antes × depois](./docs/redesign/before-after.html).
+---
+
+## 💡 Para Que Serve Este Projeto?
+
+### ❓ O Problema
+Em muitas empresas, salas de operação, call centers e centros de monitoramento (NOC), existem diversas **TVs nas paredes conectadas a um servidor Linux via XRDP** exibindo dashboards (Zabbix, Grafana, câmeras de segurança, métricas de vendas, etc.).
+
+Quando surge um problema ou quando alguém precisa verificar o que está passando em uma TV:
+- Se você tentar conectar na mesma conta via RDP comum (porta `3389`), o XRDP **derruba a sessão da TV física** ou abre um segundo desktop vazio.
+- Não é possível saber se o dashboard da TV travou sem ir **fisicamente até a sala** olhar a tela.
+- Cadastrar uma nova TV ou trocar uma senha exige abrir terminal SSH, criar usuário no Linux manualmente (`useradd`), configurar `.xsession` e gerenciar processos na mão.
+
+### ✅ A Solução
+O **NOC Display Ops** resolve isso criando uma ponte web inteligente:
+1. **Espelha a Tela Real ao Vivo**: O operador abre o navegador e vê exatamente o que a TV física está exibindo em tempo real (60 FPS, HTML5 puro), sem desconectar a TV e sem abrir sessão extra.
+2. **Video Wall no Navegador**: Visualize todas as TVs da empresa em uma única tela, com miniaturas ativas e status de conexão.
+3. **Gerenciamento sem Terminal**: Crie novas TVs, defina senhas do XRDP e reinicie sessões travadas diretamente pela interface web com 1 clique.
 
 ---
 
-## 📸 Visão Geral do Sistema (Screenshots)
+## ✨ Principais Funcionalidades
 
-### 1. Video Wall ao Vivo & Telemetria em Tempo Real
-Painel principal com **pré-visualização 16:9 ao vivo** de cada TV (estilo miniatura VirtualBox), indicadores de estado independentes (*Sessão XFCE*, *Listener Shadow*, *Visualizador*) e telemetria de recursos (**CPU, Memória RAM, Processos e Capacidade de Expansão**).
+| Recurso | Descrição |
+| :--- | :--- |
+| 👁️ **Espelhamento ao Vivo (HTML5)** | Transmissão de vídeo em tempo real via WebSockets + Apache Guacamole, sem nenhum plugin ou cliente instalado. |
+| 🛡️ **Zero Interferência na TV Física** | Utiliza o FreeRDP Shadow isolado em portas locais (`127.0.0.1:3391..3499`). A porta principal do XRDP (`:3389`) permanece 100% intocada. |
+| 🖥️ **Video Wall com Miniaturas** | Grid interativo com pré-visualização ao vivo de todas as TVs, estilo máquina virtual, com abertura em tela cheia sob demanda. |
+| 👤 **Provisionamento de TVs e Senhas** | Ao cadastrar uma TV no painel, o sistema cria o usuário Linux (`useradd`), configura a sessão XFCE (`~/.xsession`) e define a senha do XRDP (`chpasswd`) automaticamente. |
+| 📊 **Telemetria de CPU & Memória** | Monitora em tempo real quanto de processador e memória cada TV está consumindo, alertando sobrecarga e travamentos. |
+| 🔧 **Controle de Serviços Systemd** | Inicie, reinicie ou pare o serviço gráfico de qualquer TV (`tv-shadow@<usuario>.service`) diretamente pelo painel web. |
+| 🔒 **Segurança & Trilha de Auditoria** | Login protegido com PBKDF2-HMAC-SHA256 (600.000 iterações), proteção contra força bruta, tokens CSRF e registro de todos os acessos e comandos. |
 
+---
+
+## 📸 Demonstração Visual (Screenshots)
+
+### 1. Video Wall & Monitores de Rede (Painel Principal)
+Visão geral de todos os terminais com miniaturas em tempo real, telemetria de hardware e LEDs de porta de switch:
 ![Video Wall e Telemetria](./docs/screenshots/02-video-wall-dashboard.png)
 
 ---
 
 ### 2. Monitoramento de Recursos & Comparativo entre Sessões
-Compara em tempo real o consumo individual de CPU e Memória RAM de cada sessão gráfica (`xfce4-session` + `freerdp-shadow-cli`) com o consumo global do servidor Linux, estimando automaticamente quantas TVs adicionais o hardware suporta com segurança.
-
+Compara o consumo de CPU e RAM de cada sessão gráfica individual contra os recursos globais do servidor:
 ![Monitoramento de Recursos e Comparativo](./docs/screenshots/03-recursos-comparativo.png)
 
 ---
 
-### 3. Cadastro de TVs, Provisionamento Automático de Usuário Linux e Senha XRDP
-Ao cadastrar uma nova TV ou editar uma existente pelo painel web, o sistema **cria automaticamente o usuário Linux correspondente** (`useradd -m`), configura o `~/.xsession` (`xfce4-session`), **define ou altera a senha do XRDP** (`chpasswd`) e habilita o serviço `tv-shadow@<usuario>.service`.
-
+### 3. Cadastro de TVs & Troca de Senha XRDP
+Cadastre uma nova TV ou troque a credencial de acesso sem precisar digitar comandos no terminal Linux:
 ![Modal de Configuração de TV e Senha XRDP](./docs/screenshots/05-modal-config-tv-senha.png)
 
 ---
 
-### 4. Inventário de Terminais & Controle de Serviços `systemd`
-Gerenciamento centralizado das unidades `tv-shadow@<usuario>.service` (`Start`, `Restart`, `Stop`) e inspeção das portas locais de loopback (`127.0.0.1:3391..3499`).
-
+### 4. Inventário de Terminais & Serviços Systemd
+Controle centralizado dos serviços `tv-shadow@<usuario>.service` (`Iniciar`, `Reiniciar`, `Parar`) e portas de rede locais:
 ![Inventário e Controle Systemd](./docs/screenshots/04-inventario-systemd.png)
 
 ---
 
-### 5. Autenticação Segura & Trilha de Auditoria
-Acesso protegido com hash **PBKDF2-HMAC-SHA256 (600.000 iterações)**, bloqueio automático contra força bruta, proteção CSRF e registro de auditoria de logins, conexões de vídeo ao vivo e alterações administrativas.
+### 5. Console de Autenticação & Trilha de Auditoria
+Acesso seguro para a equipe de operações com registro detalhado de eventos e conexões:
 
 | Console de Login NOC | Trilha de Auditoria e Eventos |
 | :---: | :---: |
 | ![Tela de Login](./docs/screenshots/01-login-console.png) | ![Trilha de Auditoria](./docs/screenshots/06-trilha-auditoria.png) |
 
----
-
-## 🏗️ Arquitetura e Isolamento de Segurança
-
-```mermaid
-flowchart LR
-    subgraph TV["TVs Corporativas (Clientes RDP)"]
-        TV1["TV 01 (Login tv01)"]
-        TV2["TV 02 (Login tv02)"]
-    end
-
-    subgraph Host["Servidor Linux (Ubuntu 22.04/24.04 ou Debian 12/13)"]
-        XRDP["xrdp :3389 (Intocado)"]
-        X11_1["Sessão XFCE :10.0 (tv01)"]
-        X11_2["Sessão XFCE :11.0 (tv02)"]
-        SH1["freerdp-shadow-cli (127.0.0.1:3391)"]
-        SH2["freerdp-shadow-cli (127.0.0.1:3392)"]
-        GUACD["guacd 1.5.5 (127.0.0.1:4822)"]
-        API["FastAPI Backend + React UI (127.0.0.1:8000)"]
-        PROXY["Caddy / Nginx Reverse Proxy (HTTP/HTTPS)"]
-    end
-
-    subgraph Operador["Operador NOC (Navegador Web)"]
-        WEB["Console Web (Miniatura 16:9 + Tela Cheia)"]
-    end
-
-    TV1 -->|RDP :3389| XRDP --> X11_1
-    TV2 -->|RDP :3389| XRDP --> X11_2
-    X11_1 ---|Captura X11| SH1
-    X11_2 ---|Captura X11| SH2
-    SH1 & SH2 <-->|Loopback 127.0.0.1| GUACD
-    GUACD <-->|Protocolo Guacamole| API
-    API <-->|WebSocket /api/ws/tv/id| PROXY <--> WEB
-```
-
-### Pilares da Arquitetura
-1. **XRDP Principal (`:3389`) 100% Intocado**: O painel jamais reinicia o `xrdp.service` nem desconecta as TVs.
-2. **Anexação à Sessão X11 Existente**: O wrapper `/usr/local/libexec/tv-panel/tv-shadow-launch.sh` descobre dinamicamente o socket `/tmp/.X11-unix/X*` (`:10.0`, `:11.0`, etc.) e o cookie `XAUTHORITY` da sessão XFCE já aberta pela TV.
-3. **Confinamento Estrito em `127.0.0.1`**: Os servidores `freerdp-shadow` (`127.0.0.1:3391..3499`) e o daemon `guacd` (`127.0.0.1:4822`) escutam exclusivamente na interface de loopback local.
-4. **Suporte Híbrido Automático**: Funciona tanto quando a própria TV inicia o `freerdp-shadow-cli` dentro da sessão quanto via unidade `systemd` `tv-shadow@<usuario>.service`.
+> 📊 Para ver a evolução da interface e métricas de acessibilidade, consulte o [Comparativo Antes × Depois (HTML Estático)](./docs/redesign/before-after.html).
 
 ---
 
-## 🐧 Compatibilidade de Sistemas Operacionais (Ubuntu & Debian)
+## ⚡ Instalação Rápida no Servidor Linux
 
-O instalador ([`deploy/scripts/install-debian13.sh`](./deploy/scripts/install-debian13.sh)) e o wrapper ([`deploy/scripts/tv-shadow-launch.sh`](./deploy/scripts/tv-shadow-launch.sh)) detectam automaticamente a distribuição Linux e a versão do FreeRDP instalada:
+### Requisitos Mínimos
+- Servidor com **Ubuntu 22.04 / 24.04 LTS** ou **Debian 12 / 13**.
+- XRDP e XFCE instalados (o servidor já deve aceitar logins XRDP na porta `3389`).
 
-| Sistema Operacional | Pacote FreeRDP Detectado | Binário Utilizado | Status |
-| :--- | :--- | :--- | :--- |
-| **Ubuntu 24.04 LTS ("Noble")** | `freerdp2-shadow-x11` (ou `freerdp3-shadow-x11`) | `/usr/bin/freerdp-shadow-cli` / `freerdp-shadow-cli3` | ✅ **100% Compatível** |
-| **Ubuntu 22.04 LTS ("Jammy")** | `freerdp2-shadow-x11` | `/usr/bin/freerdp-shadow-cli` | ✅ **100% Compatível** |
-| **Debian 13 ("Trixie")** | `freerdp3-shadow-x11` | `/usr/bin/freerdp-shadow-cli3` | ✅ **100% Compatível** |
-| **Debian 12 ("Bookworm")** | `freerdp2-shadow-x11` | `/usr/bin/freerdp-shadow-cli` | ✅ **100% Compatível** |
+### Instalação Automatizada em 1 Passo
 
----
-
-## 🚀 Guia de Instalação Passo a Passo (Ubuntu & Debian)
-
-### Passo 1: Instalar dependências de base (Ubuntu 22.04/24.04 ou Debian 12/13)
-Se o seu servidor **Ubuntu** ou **Debian** já possui XRDP e XFCE funcionando, instale apenas o Node.js, Git e Docker. Caso esteja começando em um servidor limpo, execute:
+Execute no terminal do seu servidor como `root`:
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y \
-  xrdp xfce4 xfce4-goodies dbus-x11 \
-  git curl ca-certificates nodejs npm \
-  docker.io
+# 1. Clonar o repositório
+git clone https://github.com/JoseVitor-net/panel-web-server-XRDP.git /home/user/panel-web-server-XRDP
+cd /home/user/panel-web-server-XRDP
 
-# No Ubuntu/Debian, garante que o usuário xrdp possa ler o certificado TLS:
-sudo adduser xrdp ssl-cert || true
-sudo systemctl enable --now xrdp
-sudo systemctl enable --now docker
+# 2. Executar o instalador automático (Ubuntu 24.04 / 22.04)
+sudo bash deploy/scripts/install-ubuntu2404.sh
 ```
+*(Se estiver utilizando **Debian 12 ou 13**, execute: `sudo bash deploy/scripts/install-debian13.sh`).*
 
-> **Dica para Ubuntu 22.04 / 24.04:** Caso o pacote `docker-compose-v2` ou `docker-compose-plugin` esteja disponível via APT, instale-o com:
-> ```bash
-> sudo apt-get install -y docker-compose-v2 || sudo apt-get install -y docker-compose
-> ```
+O instalador automático cuida de tudo:
+- Instala pacotes do sistema (`guacd`, `nodejs`, `npm`, `caddy`, `freerdp-shadow-x11`).
+- Compila a interface gráfica web React/TypeScript.
+- Cria o ambiente seguro Python em `/opt/tv-panel` com banco de dados SQLite.
+- Configura as regras de permissão restrita no `sudoers` e as unidades do `systemd`.
+- Inicia o proxy reverso Caddy com suporte a HTTPS e WebSockets.
 
 ---
 
-### Passo 2: Clonar o Repositório e Compilar o Frontend
-```bash
-sudo git clone https://github.com/JoseVitor-net/panel-web-server-XRDP.git /opt/server-rdp
-cd /opt/server-rdp/frontend
-npm install
-npm run build
-cd /opt/server-rdp
-```
+## 👤 Primeiro Acesso ao Painel
 
----
-
-### Passo 3: Executar o Instalador do Backend, Scripts e Unidades `systemd`
-O script instala automaticamente `freerdp2-shadow-x11` (no Ubuntu / Debian 12) ou `freerdp3-shadow-x11` (no Debian 13), cria o ambiente virtual Python em `/opt/tv-panel`, aplica as migrações SQLite, configura a regra restrita do `sudoers` e ativa o serviço `tv-panel-api.service`:
-
-```bash
-sudo bash deploy/scripts/install-debian13.sh
-```
-
----
-
-### Passo 4: Subir o Gateway `guacd` em Loopback (`127.0.0.1:4822`)
-Utilizamos a imagem oficial estável `guacamole/guacd:1.5.5` em `network_mode: host` vinculada exclusivamente a `127.0.0.1:4822`:
-
-```bash
-sudo docker compose -f deploy/guacamole/docker-compose.guacd-host.yml up -d
-```
-*(Se o seu Ubuntu usar o binário clássico `docker-compose` com hífen, execute `sudo docker-compose -f deploy/guacamole/docker-compose.guacd-host.yml up -d`).*
-
----
-
-### Passo 5: Criar o Usuário Administrador do Painel Web
-Crie sua credencial administrativa para acessar o console web:
+Após a instalação, crie a senha do seu usuário administrador:
 
 ```bash
 cd /opt/tv-panel/backend
@@ -165,77 +114,107 @@ sudo -u tv-panel TV_PANEL_DB_PATH=/var/lib/tv-panel/tv_panel.db \
   /opt/tv-panel/venv/bin/python -m app.cli create-admin --username operador_noc
 ```
 
----
-
-### Passo 6: Configurar o Reverse Proxy (Caddy ou Nginx)
-Para acessar o painel diretamente pelo IP ou domínio do servidor (porta `80` / `443` com suporte a WebSockets):
-
-**Opção A — Caddy (Recomendado):**
-```bash
-sudo apt-get install -y caddy
-sudo cp /opt/server-rdp/deploy/reverse-proxy/Caddyfile.example /etc/caddy/Caddyfile
-sudo systemctl restart caddy
+Em seguida, acesse no navegador:
 ```
-
-**Opção B — Nginx:**
-```bash
-sudo apt-get install -y nginx
-sudo cp /opt/server-rdp/deploy/reverse-proxy/nginx-tv-panel.conf.example /etc/nginx/sites-available/tv-panel.conf
-sudo ln -sf /etc/nginx/sites-available/tv-panel.conf /etc/nginx/sites-enabled/tv-panel.conf
-sudo rm -f /etc/nginx/sites-enabled/default
-sudo systemctl reload nginx
+https://IP-DO-SEU-SERVIDOR
 ```
+Faça login com o usuário `operador_noc` e a senha definida.
 
 ---
 
-## 🛠️ Como Cadastrar TVs e Trocar Senhas XRDP pelo Painel
+## 🛠️ Como Cadastrar uma TV e Conectar no XRDP
 
-1. Acesse o painel pelo navegador (`http://<IP-DO-SERVIDOR>` ou `https://<SEU-DOMINIO>`).
-2. Clique em **"+ Nova TV"** (ou em **"Editar"** em uma TV existente).
-3. Informe:
-   - **Identificador (`slug`)**: ex. `tv04`
-   - **Nome de Exibição**: ex. `TV 04 - Sala de Reunião`
-   - **Usuário Unix da Sessão XFCE**: ex. `tv04`
-   - **Porta Local Shadow**: ex. `3394`
-   - **Senha XRDP do Usuário Linux**: digite a senha que a TV usará para logar no XRDP (`:3389`).
-4. Clique em **"Salvar Configurações"**. O backend executará automaticamente o helper seguro `/usr/local/libexec/tv-panel/tv-user-manage.sh`, criando o usuário Linux, configurando o `~/.xsession` para abrir o **XFCE4** e ativando o serviço `tv-shadow@tv04.service`.
+1. No painel web, clique em **"+ Nova TV"**.
+2. Preencha os campos:
+   - **Identificador (`slug`)**: ex. `tv01`
+   - **Nome da TV**: ex. `TV 01 - Monitoramento NOC`
+   - **Usuário Unix**: ex. `tv01`
+   - **Porta Local Shadow**: ex. `3391`
+   - **Senha do XRDP**: defina a senha da conta.
+3. Clique em **"Salvar Configurações"**. O sistema cria o usuário no Linux e prepara a sessão XFCE automaticamente.
+4. Na TV física (ou cliente RDP), conecte no IP do servidor (porta `3389`) utilizando o usuário `tv01` e a senha definida.
+5. Assim que a TV conectar, o painel web exibirá o status **ONLINE** e a transmissão ao vivo aparecerá na tela do navegador!
 
 ---
 
-## 🔄 Como Atualizar o Sistema no Servidor (Git Pull)
+## 🔄 Como Atualizar o Sistema no Servidor
 
-Sempre que houver uma nova atualização no repositório GitHub, execute no servidor Ubuntu ou Debian:
+Sempre que sair uma nova atualização no repositório GitHub, execute no servidor:
 
 ```bash
-cd /opt/server-rdp
-git pull
+cd /home/user/panel-web-server-XRDP
+git fetch origin
+git reset --hard origin/main
 
-# 1. Atualizar scripts e backend
-sudo install -m 0755 deploy/scripts/tv-shadow-launch.sh /usr/local/libexec/tv-panel/tv-shadow-launch.sh
-sudo install -m 0755 deploy/scripts/tv-user-manage.sh /usr/local/libexec/tv-panel/tv-user-manage.sh
-sudo cp -r backend/app/* /opt/tv-panel/backend/app/
-sudo systemctl restart tv-panel-api.service
-
-# 2. Recompilar e publicar o frontend
-cd /opt/server-rdp/frontend
+# Recompilar frontend com novos recursos
+cd frontend
+npm install
 npm run build
-sudo cp -r dist/* /opt/tv-panel/frontend/dist/
+rm -rf /opt/tv-panel/frontend/dist
+cp -r dist /opt/tv-panel/frontend/
+
+# Atualizar backend e reiniciar
+cd ..
+cp -r backend/app /opt/tv-panel/backend/
+systemctl daemon-reload
+systemctl restart tv-panel-api.service
 ```
 
 ---
 
-## 🔍 Comandos Úteis de Diagnóstico e Operação
+## 🏗️ Como Funciona por Baixo dos Panos (Arquitetura)
+
+```mermaid
+flowchart LR
+    subgraph TVs["TVs Físicas (Clientes RDP)"]
+        TV1["TV 01 (Display Físico)"]
+    end
+
+    subgraph Linux["Servidor Linux"]
+        XRDP["xrdp :3389 (Porta Padrão Intocada)"]
+        X11["Sessão XFCE (:10.0)"]
+        SHADOW["FreeRDP Shadow (127.0.0.1:3391)"]
+        GUACD["Apache guacd (127.0.0.1:4822)"]
+        API["FastAPI Backend (127.0.0.1:8000)"]
+        CADDY["Caddy Reverse Proxy (:443 HTTPS)"]
+    end
+
+    subgraph Browser["Operadores NOC (Navegador)"]
+        CLIENT["Dashboard Web (Canvas HTML5)"]
+    end
+
+    TV1 -->|Porta 3389| XRDP --> X11
+    X11 ---|Memória Compartilhada| SHADOW
+    SHADOW <-->|Loopback Local| GUACD
+    GUACD <-->|Instruções Guacamole| API
+    API <-->|WebSocket Criptografado| CADDY <--> CLIENT
+```
+
+- **Isolamento Total**: O FreeRDP Shadow e o `guacd` escutam **apenas em `127.0.0.1`** (loopback local fechado). Eles não ficam expostos na rede externa.
+- **Leitura Direta da Memória (MIT-SHM)**: O shadow conecta diretamente na sessão gráfica X11 existente da TV através de memória compartilhada, sem gastar processamento com renderização secundária.
+- **Zero Delay**: O tráfego para o navegador usa WebSockets com instruções compactas do protocolo Guacamole, desenhando os pixels diretamente na GPU do navegador via `<canvas>`.
+
+---
+
+## 🔍 Comandos Úteis de Diagnóstico
 
 ```bash
-# Diagnóstico completo das sessões XFCE, portas Shadow e banco de dados
+# Diagnóstico completo das sessões XFCE, portas e banco de dados
 cd /opt/tv-panel/backend
 sudo -u tv-panel TV_PANEL_DB_PATH=/var/lib/tv-panel/tv_panel.db \
   /opt/tv-panel/venv/bin/python -m app.cli diagnose
 
-# Verificar portas Shadow (3391..3399), guacd (4822) e API (8000) em loopback
-ss -tlnp '( sport >= :3391 and sport <= :3399 ) or sport = :4822 or sport = :8000'
+# Verificar se as portas locais de Shadow e guacd estão ativas
+ss -tlnp | grep -E '3389|339[1234]|4822|8000'
 
-# Consultar logs da API ou do serviço Shadow de uma TV específica
+# Ver logs da API web
 journalctl -u tv-panel-api.service -n 50 --no-pager
+
+# Ver logs do serviço de espelhamento de uma TV específica
 journalctl -u tv-shadow@tv01.service -n 50 --no-pager
 ```
+
+---
+
+## 📄 Licença
+Distribuído sob a licença MIT. Consulte `LICENSE` para mais detalhes.
