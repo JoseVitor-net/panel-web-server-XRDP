@@ -10,6 +10,7 @@ import {
   SystemOverviewTelemetry,
   TVFormPayload,
   TVItem,
+  UserItem,
 } from "./types";
 
 const INITIAL_FORM: TVFormPayload = {
@@ -27,6 +28,17 @@ const INITIAL_FORM: TVFormPayload = {
   notes: "",
   unix_password: "",
 };
+
+function formatDate(val: string | null | undefined): string {
+  if (!val) return "Nunca";
+  try {
+    const d = new Date(val);
+    if (isNaN(d.getTime())) return val;
+    return d.toLocaleString("pt-BR");
+  } catch {
+    return val;
+  }
+}
 
 function statusLabel(
   status: OverallStatus,
@@ -120,7 +132,7 @@ export const App: React.FC = () => {
   } | null>(null);
 
   const [activeTab, setActiveTab] = useState<
-    "dashboard" | "resources" | "admin" | "audit"
+    "dashboard" | "resources" | "admin" | "users" | "audit"
   >("dashboard");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -138,6 +150,35 @@ export const App: React.FC = () => {
     useState<PendingConfirmation | null>(null);
 
   const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>([]);
+
+  // Gestão de Usuários do Painel
+  const [users, setUsers] = useState<UserItem[]>([]);
+  const [usersLoading, setUsersLoading] = useState<boolean>(false);
+  const [isUserModalOpen, setIsUserModalOpen] = useState<boolean>(false);
+  const [userFormData, setUserFormData] = useState({
+    username: "",
+    password: "",
+    confirmPassword: "",
+    is_active: true,
+  });
+  const [userFormSubmitting, setUserFormSubmitting] = useState<boolean>(false);
+  const [userResetModal, setUserResetModal] = useState<{
+    userId: number;
+    username: string;
+  } | null>(null);
+  const [userResetPassword, setUserResetPassword] = useState<string>("");
+  const [userResetConfirm, setUserResetConfirm] = useState<string>("");
+  const [userResetSubmitting, setUserResetSubmitting] =
+    useState<boolean>(false);
+
+  // Exclusão de Perfil de TV
+  const [tvToDelete, setTvToDelete] = useState<TVItem | null>(null);
+  const [tvDeleteSubmitting, setTvDeleteSubmitting] = useState<boolean>(false);
+
+  // Exclusão de Usuário
+  const [userToDelete, setUserToDelete] = useState<UserItem | null>(null);
+  const [userDeleteSubmitting, setUserDeleteSubmitting] =
+    useState<boolean>(false);
 
   const loadTVs = useCallback(async (silent = false) => {
     if (!silent) {
@@ -192,6 +233,203 @@ export const App: React.FC = () => {
       // ignora erro secundário
     }
   }, []);
+
+  const loadUsers = useCallback(async () => {
+    setUsersLoading(true);
+    try {
+      const list = await api.listUsers();
+      setUsers(list);
+    } catch (err) {
+      setBannerNotice({
+        type: "error",
+        text:
+          err instanceof Error
+            ? err.message
+            : "Falha ao carregar lista de usuários do painel.",
+      });
+    } finally {
+      setUsersLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (session && activeTab === "users") {
+      void loadUsers();
+    }
+  }, [session, activeTab, loadUsers]);
+
+  const handleCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!session) return;
+    if (userFormData.password !== userFormData.confirmPassword) {
+      setBannerNotice({
+        type: "error",
+        text: "As senhas digitadas não coincidem.",
+      });
+      return;
+    }
+    if (userFormData.password.length < 10) {
+      setBannerNotice({
+        type: "error",
+        text: "A senha deve conter no mínimo 10 caracteres.",
+      });
+      return;
+    }
+    setUserFormSubmitting(true);
+    try {
+      await api.createUser(
+        {
+          username: userFormData.username.trim(),
+          password: userFormData.password,
+          is_active: userFormData.is_active,
+        },
+        session.csrf_token
+      );
+      setBannerNotice({
+        type: "success",
+        text: `Usuário '${userFormData.username}' cadastrado com sucesso.`,
+      });
+      setIsUserModalOpen(false);
+      setUserFormData({
+        username: "",
+        password: "",
+        confirmPassword: "",
+        is_active: true,
+      });
+      void loadUsers();
+    } catch (err) {
+      setBannerNotice({
+        type: "error",
+        text:
+          err instanceof Error
+            ? err.message
+            : "Falha ao cadastrar novo usuário.",
+      });
+    } finally {
+      setUserFormSubmitting(false);
+    }
+  };
+
+  const handleResetUserPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!session || !userResetModal) return;
+    if (userResetPassword !== userResetConfirm) {
+      setBannerNotice({
+        type: "error",
+        text: "As senhas digitadas não coincidem.",
+      });
+      return;
+    }
+    if (userResetPassword.length < 10) {
+      setBannerNotice({
+        type: "error",
+        text: "A nova senha deve conter no mínimo 10 caracteres.",
+      });
+      return;
+    }
+    setUserResetSubmitting(true);
+    try {
+      const res = await api.resetUserPassword(
+        userResetModal.userId,
+        userResetPassword,
+        session.csrf_token
+      );
+      setBannerNotice({
+        type: "success",
+        text: res.message || "Senha redefinida com sucesso.",
+      });
+      setUserResetModal(null);
+      setUserResetPassword("");
+      setUserResetConfirm("");
+      void loadUsers();
+    } catch (err) {
+      setBannerNotice({
+        type: "error",
+        text:
+          err instanceof Error ? err.message : "Falha ao redefinir senha.",
+      });
+    } finally {
+      setUserResetSubmitting(false);
+    }
+  };
+
+  const handleToggleUserStatus = async (user: UserItem) => {
+    if (!session) return;
+    try {
+      const updated = await api.toggleUserStatus(
+        user.id,
+        !user.is_active,
+        session.csrf_token
+      );
+      setBannerNotice({
+        type: "success",
+        text: `Usuário '${updated.username}' agora está ${
+          updated.is_active ? "ATIVO" : "BLOQUEADO"
+        }.`,
+      });
+      void loadUsers();
+    } catch (err) {
+      setBannerNotice({
+        type: "error",
+        text:
+          err instanceof Error
+            ? err.message
+            : "Falha ao alterar status do usuário.",
+      });
+    }
+  };
+
+  const handleDeleteUser = async () => {
+    if (!session || !userToDelete) return;
+    setUserDeleteSubmitting(true);
+    try {
+      const res = await api.deleteUser(userToDelete.id, session.csrf_token);
+      setBannerNotice({
+        type: "success",
+        text: res.message || "Usuário excluído com sucesso.",
+      });
+      setUserToDelete(null);
+      void loadUsers();
+    } catch (err) {
+      setBannerNotice({
+        type: "error",
+        text:
+          err instanceof Error ? err.message : "Falha ao excluir usuário.",
+      });
+    } finally {
+      setUserDeleteSubmitting(false);
+    }
+  };
+
+  const handleConfirmDeleteTv = async () => {
+    if (!session || !tvToDelete) return;
+    setTvDeleteSubmitting(true);
+    try {
+      const res = await api.deleteTV(tvToDelete.id, session.csrf_token);
+      setBannerNotice({
+        type: "success",
+        text: res.message || "Perfil da TV excluído com sucesso.",
+      });
+      if (editingTvId === tvToDelete.id) {
+        setIsFormModalOpen(false);
+        setEditingTvId(null);
+      }
+      if (activeViewerTv?.id === tvToDelete.id) {
+        setActiveViewerTv(null);
+      }
+      setTvToDelete(null);
+      void loadTVs(false);
+    } catch (err) {
+      setBannerNotice({
+        type: "error",
+        text:
+          err instanceof Error ? err.message : "Falha ao excluir perfil da TV.",
+      });
+    } finally {
+      setTvDeleteSubmitting(false);
+    }
+  };
+
 
   useEffect(() => {
     api
@@ -631,6 +869,25 @@ export const App: React.FC = () => {
 
           <button
             type="button"
+            className={`sidebar-link ${activeTab === "users" ? "active" : ""}`}
+            onClick={() => setActiveTab("users")}
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.85">
+              <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+              <circle cx="9" cy="7" r="4" />
+              <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+              <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+            </svg>
+            <span>Gestão de Usuários</span>
+            {users.length > 0 && (
+              <span className="sidebar-badge sidebar-badge-neutral">
+                {users.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
             className={`sidebar-link ${activeTab === "audit" ? "active" : ""}`}
             onClick={() => setActiveTab("audit")}
           >
@@ -726,6 +983,8 @@ export const App: React.FC = () => {
                   ? "Monitoramento de Recursos & Comparativo de Sessões"
                   : activeTab === "admin"
                   ? "Inventário & Controle Systemd"
+                  : activeTab === "users"
+                  ? "Gestão de Usuários & Controle de Acesso"
                   : "Auditoria & Eventos de Segurança"}
               </strong>
             </div>
@@ -1674,12 +1933,166 @@ export const App: React.FC = () => {
                           >
                             Stop
                           </button>
+                          <button
+                            type="button"
+                            className="btn btn-danger btn-xs"
+                            onClick={() => setTvToDelete(tv)}
+                            title="Excluir perfil desta TV"
+                          >
+                            Excluir
+                          </button>
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+            </section>
+          )}
+
+          {activeTab === "users" && (
+            <section className="admin-panel">
+              <div className="panel-header">
+                <div>
+                  <h2>Usuários do Painel &amp; Controle de Acesso</h2>
+                  <p className="panel-subtitle">
+                    Gerencie os operadores e administradores com acesso ao console NOC. Você pode criar novas credenciais, resetar senhas ou bloquear contas.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={() => {
+                    setUserFormData({
+                      username: "",
+                      password: "",
+                      confirmPassword: "",
+                      is_active: true,
+                    });
+                    setIsUserModalOpen(true);
+                  }}
+                >
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.2">
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                  <span>Novo Usuário</span>
+                </button>
+              </div>
+
+              {usersLoading && users.length === 0 ? (
+                <div className="loading-state">
+                  <div className="spinner" />
+                  <span>Carregando usuários do sistema...</span>
+                </div>
+              ) : (
+                <div className="table-responsive">
+                  <table className="admin-table">
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>Usuário / Operador</th>
+                        <th>Status da Conta</th>
+                        <th>Falhas de Login</th>
+                        <th>Criado em</th>
+                        <th>Último Acesso</th>
+                        <th>Ações Administrativas</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {users.map((u) => {
+                        const isSelf = session?.username === u.username;
+                        return (
+                          <tr key={u.id}>
+                            <td>
+                              <code>#{u.id}</code>
+                            </td>
+                            <td>
+                              <strong>{u.username}</strong>
+                              {isSelf && (
+                                <span className="mono-badge" style={{ marginLeft: "0.5rem" }}>
+                                  Você
+                                </span>
+                              )}
+                            </td>
+                            <td>
+                              {u.is_active ? (
+                                <span className="tag-active">● ATIVO</span>
+                              ) : (
+                                <span className="tag-blocked">✕ BLOQUEADO</span>
+                              )}
+                            </td>
+                            <td>
+                              {u.failed_attempts > 0 ? (
+                                <span style={{ color: "var(--warn)" }}>
+                                  {u.failed_attempts} tentativa(s)
+                                </span>
+                              ) : (
+                                <span style={{ color: "var(--text-3)" }}>0</span>
+                              )}
+                            </td>
+                            <td>{formatDate(u.created_at)}</td>
+                            <td>{formatDate(u.last_login_at)}</td>
+                            <td className="table-actions">
+                              <button
+                                type="button"
+                                className="btn btn-secondary btn-xs"
+                                onClick={() => {
+                                  setUserResetPassword("");
+                                  setUserResetConfirm("");
+                                  setUserResetModal({ userId: u.id, username: u.username });
+                                }}
+                                title="Redefinir senha de acesso deste usuário"
+                              >
+                                Redefinir Senha
+                              </button>
+
+                              <button
+                                type="button"
+                                className={`btn ${u.is_active ? "btn-secondary" : "btn-primary"} btn-xs`}
+                                disabled={isSelf}
+                                onClick={() => handleToggleUserStatus(u)}
+                                title={
+                                  isSelf
+                                    ? "Você não pode bloquear o seu próprio usuário logado"
+                                    : u.is_active
+                                    ? "Bloquear acesso deste operador ao painel"
+                                    : "Desbloquear acesso deste operador"
+                                }
+                              >
+                                {u.is_active ? "Bloquear" : "Desbloquear"}
+                              </button>
+
+                              <button
+                                type="button"
+                                className="btn btn-danger btn-xs"
+                                disabled={isSelf || users.length <= 1}
+                                onClick={() => setUserToDelete(u)}
+                                title={
+                                  isSelf
+                                    ? "Você não pode excluir o seu próprio usuário logado"
+                                    : users.length <= 1
+                                    ? "O sistema deve possuir pelo menos 1 usuário ativo"
+                                    : "Excluir operador do painel"
+                                }
+                              >
+                                Excluir
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {users.length === 0 && (
+                        <tr>
+                          <td colSpan={7} className="empty-row">
+                            Nenhum usuário cadastrado além do administrador padrão.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </section>
           )}
 
@@ -2001,30 +2414,350 @@ export const App: React.FC = () => {
                 </code>
               </div>
 
+              <div className="modal-actions modal-actions-split">
+                {editingTvId !== null ? (
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    onClick={() => {
+                      const target = tvs.find((t) => t.id === editingTvId);
+                      if (target) {
+                        setIsFormModalOpen(false);
+                        setTvToDelete(target);
+                      }
+                    }}
+                  >
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                    </svg>
+                    <span>Excluir TV</span>
+                  </button>
+                ) : (
+                  <span />
+                )}
+                <div className="modal-actions-right">
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => setIsFormModalOpen(false)}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn btn-primary"
+                    disabled={formSubmitting}
+                  >
+                    {formSubmitting
+                      ? "Salvando..."
+                      : editingTvId === null
+                      ? "Cadastrar TV"
+                      : "Salvar Configurações"}
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Exclusão de TV */}
+      {tvToDelete && (
+        <div
+          className="modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-tv-title"
+        >
+          <div className="modal-box">
+            <div className="modal-header-row">
+              <h3 id="delete-tv-title" style={{ color: "var(--bad)" }}>
+                Excluir Perfil de TV
+              </h3>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setTvToDelete(null)}
+                aria-label="Fechar"
+              >
+                ✕
+              </button>
+            </div>
+            <p>
+              Tem certeza que deseja excluir o perfil da TV{" "}
+              <strong>{tvToDelete.name}</strong> (identificador <code>{tvToDelete.slug}</code> — porta <code>{tvToDelete.local_port}</code>)?
+            </p>
+            <div className="alert alert-warning" role="alert">
+              <span>
+                O serviço local FreeRDP Shadow em loopback será finalizado e o registro será permanentemente removido do painel.
+              </span>
+            </div>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setTvToDelete(null)}
+                disabled={tvDeleteSubmitting}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                disabled={tvDeleteSubmitting}
+                onClick={handleConfirmDeleteTv}
+              >
+                {tvDeleteSubmitting ? "Excluindo..." : "Confirmar Exclusão"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Cadastro de Novo Usuário */}
+      {isUserModalOpen && (
+        <div
+          className="modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="create-user-title"
+        >
+          <div className="modal-box">
+            <div className="modal-header-row">
+              <h3 id="create-user-title">Novo Operador / Administrador</h3>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setIsUserModalOpen(false)}
+                aria-label="Fechar modal"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateUser}>
+              <label className="form-field">
+                <span>Nome de Usuário (Login)</span>
+                <input
+                  type="text"
+                  required
+                  autoFocus
+                  pattern="^[a-zA-Z0-9_\-\.]{3,64}$"
+                  value={userFormData.username}
+                  onChange={(e) =>
+                    setUserFormData({
+                      ...userFormData,
+                      username: e.target.value.toLowerCase(),
+                    })
+                  }
+                  placeholder="Ex: operador_noite"
+                />
+                <small>Mínimo 3 caracteres alfanuméricos.</small>
+              </label>
+
+              <label className="form-field">
+                <span>Senha de Acesso</span>
+                <input
+                  type="password"
+                  required
+                  minLength={10}
+                  value={userFormData.password}
+                  onChange={(e) =>
+                    setUserFormData({
+                      ...userFormData,
+                      password: e.target.value,
+                    })
+                  }
+                  placeholder="Mínimo 10 caracteres"
+                />
+              </label>
+
+              <label className="form-field">
+                <span>Confirmar Senha</span>
+                <input
+                  type="password"
+                  required
+                  minLength={10}
+                  value={userFormData.confirmPassword}
+                  onChange={(e) =>
+                    setUserFormData({
+                      ...userFormData,
+                      confirmPassword: e.target.value,
+                    })
+                  }
+                  placeholder="Digite a mesma senha novamente"
+                />
+              </label>
+
+              <label className="checkbox-item" style={{ marginTop: "1rem" }}>
+                <input
+                  type="checkbox"
+                  checked={userFormData.is_active}
+                  onChange={(e) =>
+                    setUserFormData({
+                      ...userFormData,
+                      is_active: e.target.checked,
+                    })
+                  }
+                />
+                <span>Habilitar conta como ativa imediatamente</span>
+              </label>
+
               <div className="modal-actions">
                 <button
                   type="button"
                   className="btn btn-secondary"
-                  onClick={() => setIsFormModalOpen(false)}
+                  onClick={() => setIsUserModalOpen(false)}
+                  disabled={userFormSubmitting}
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   className="btn btn-primary"
-                  disabled={formSubmitting}
+                  disabled={userFormSubmitting}
                 >
-                  {formSubmitting
-                    ? "Salvando..."
-                    : editingTvId === null
-                    ? "Cadastrar TV"
-                    : "Salvar Configurações"}
+                  {userFormSubmitting ? "Criando..." : "Cadastrar Usuário"}
                 </button>
               </div>
             </form>
           </div>
         </div>
       )}
+
+      {/* Modal de Redefinição de Senha do Usuário */}
+      {userResetModal && (
+        <div
+          className="modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="reset-user-pwd-title"
+        >
+          <div className="modal-box">
+            <div className="modal-header-row">
+              <h3 id="reset-user-pwd-title">Redefinir Senha do Usuário</h3>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setUserResetModal(null)}
+                aria-label="Fechar modal"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p>
+              Definir uma nova senha para o operador:{" "}
+              <strong>{userResetModal.username}</strong>
+            </p>
+
+            <form onSubmit={handleResetUserPassword}>
+              <label className="form-field">
+                <span>Nova Senha</span>
+                <input
+                  type="password"
+                  required
+                  autoFocus
+                  minLength={10}
+                  value={userResetPassword}
+                  onChange={(e) => setUserResetPassword(e.target.value)}
+                  placeholder="Mínimo 10 caracteres"
+                />
+              </label>
+
+              <label className="form-field">
+                <span>Confirmar Nova Senha</span>
+                <input
+                  type="password"
+                  required
+                  minLength={10}
+                  value={userResetConfirm}
+                  onChange={(e) => setUserResetConfirm(e.target.value)}
+                  placeholder="Digite a mesma senha novamente"
+                />
+              </label>
+
+              <div className="alert alert-warning" role="alert">
+                <span>
+                  Por segurança, qualquer sessão ativa deste usuário no painel será revogada imediatamente.
+                </span>
+              </div>
+
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setUserResetModal(null)}
+                  disabled={userResetSubmitting}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={userResetSubmitting}
+                >
+                  {userResetSubmitting ? "Salvando..." : "Salvar Nova Senha"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Exclusão de Usuário */}
+      {userToDelete && (
+        <div
+          className="modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-user-title"
+        >
+          <div className="modal-box">
+            <div className="modal-header-row">
+              <h3 id="delete-user-title" style={{ color: "var(--bad)" }}>
+                Excluir Usuário do Painel
+              </h3>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setUserToDelete(null)}
+                aria-label="Fechar"
+              >
+                ✕
+              </button>
+            </div>
+            <p>
+              Tem certeza que deseja excluir o operador{" "}
+              <strong>{userToDelete.username}</strong>?
+            </p>
+            <div className="alert alert-error" role="alert">
+              <span>
+                Esta conta perderá imediatamente todo o acesso ao painel web e suas sessões serão revogadas.
+              </span>
+            </div>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setUserToDelete(null)}
+                disabled={userDeleteSubmitting}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                disabled={userDeleteSubmitting}
+                onClick={handleDeleteUser}
+              >
+                {userDeleteSubmitting ? "Excluindo..." : "Confirmar Exclusão"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
 
       {/* Modal de Confirmação Explícita */}
       {pendingConfirmation && (

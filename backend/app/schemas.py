@@ -197,3 +197,45 @@ class AuditLogItem(BaseModel):
     target_id: str | None
     outcome: str
     details: dict
+
+
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    is_active: bool
+    failed_attempts: int
+    locked_until: str | None
+    created_at: str
+    last_login_at: str | None
+
+
+class UserCreateRequest(BaseModel):
+    username: str = Field(..., min_length=3, max_length=64)
+    password: str = Field(..., min_length=10, max_length=128)
+    is_active: bool = Field(default=True)
+
+    @field_validator("username")
+    @classmethod
+    def validate_username(cls, value: str) -> str:
+        cleaned = value.strip().lower()
+        if not re.match(r"^[a-z0-9_\-\.]{3,64}$", cleaned):
+            raise ValueError(
+                "O nome de usuário deve conter apenas letras, números, hífens, sublinhados ou pontos."
+            )
+        if cleaned in FORBIDDEN_UNIX_USERS:
+            raise ValueError(f"O nome de usuário '{cleaned}' é reservado pelo sistema.")
+        return cleaned
+
+
+class UserPasswordResetRequest(BaseModel):
+    new_password: str = Field(..., min_length=10, max_length=128)
+
+
+class UserStatusUpdateRequest(BaseModel):
+    is_active: bool
+
+
+class GenericMessageResponse(BaseModel):
+    ok: bool
+    message: str
+

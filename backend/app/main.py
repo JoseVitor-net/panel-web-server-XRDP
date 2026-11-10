@@ -15,16 +15,22 @@ from app.db import db_session, get_connection, run_migrations
 from app.schemas import (
     AuditLogItem,
     AuthSessionResponse,
+    GenericMessageResponse,
     LoginRequest,
     SystemOverviewTelemetry,
     TVCreateRequest,
     TVResponse,
     TVServiceActionRequest,
     TVUpdateRequest,
+    UserCreateRequest,
+    UserPasswordResetRequest,
+    UserResponse,
+    UserStatusUpdateRequest,
 )
 from app.security import (
     create_session,
     get_authenticated_session,
+    hash_password,
     iso_utc,
     parse_iso_utc,
     record_audit_log,
@@ -606,6 +612,276 @@ def manage_tv_service(
 
     refreshed = conn.execute("SELECT * FROM tvs WHERE id = ?", (tv_id,)).fetchone()
     return _row_to_tv_response(refreshed)
+
+
+@app.delete("/api/tvs/{tv_id}", response_model=GenericMessageResponse)
+def delete_tv(
+    tv_id: int,
+    request: Request,
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    sess = get_authenticated_session(conn, request, require_csrf=True)
+    existing = conn.execute("SELECT * FROM tvs WHERE id = ?", (tv_id,)).fetchone()
+    if not existing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="TV não encontrada.")
+
+    tv_dict = dict(existing)
+
+    # 1. Tenta parar o serviço de Shadow correspondente para não deixar processo órfão
+    try:
+        control_tv_shadow_service(tv_dict["unix_user"], "stop")
+    except Exception:
+        pass
+
+    # 2. Invalida cache de runtime
+    invalidate_runtime_cache(tv_id)
+
+    # 3. Exclui registro do banco
+    conn.execute("DELETE FROM tvs WHERE id = ?", (tv_id,))
+    conn.commit()
+
+    record_audit_log(
+        conn,
+        actor_username=sess["username"],
+        ip_address=_client_ip(request),
+        action="tv.delete",
+        target_type="tv",
+        target_id=tv_dict["slug"],
+        outcome="success",
+        details={
+            "name": tv_dict["name"],
+            "unix_user": tv_dict["unix_user"],
+            "local_port": tv_dict["local_port"],
+        },
+    )
+
+    return GenericMessageResponse(
+        ok=True,
+        message=f"Perfil da TV '{tv_dict['name']}' ({tv_dict['slug']}) excluído com sucesso.",
+    )
+
+
+# ---------- Gerenciamento de Usuários do Painel ----------
+
+
+@app.get("/api/users", response_model=list[UserResponse])
+def list_users(
+    request: Request,
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    get_authenticated_session(conn, request, require_csrf=False)
+    rows = conn.execute(
+        """
+        SELECT id, username, is_active, failed_attempts, locked_until, created_at, last_login_at
+        FROM admins
+        ORDER BY id ASC
+        """
+    ).fetchall()
+    return [
+        UserResponse(
+            id=int(r["id"]),
+            username=r["username"],
+            is_active=bool(r["is_active"]),
+            failed_attempts=int(r["failed_attempts"]),
+            locked_until=r["locked_until"],
+            created_at=r["created_at"],
+            last_login_at=r["last_login_at"],
+        )
+        for r in rows
+    ]
+
+
+@app.post("/api/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+def create_user(
+    payload: UserCreateRequest,
+    request: Request,
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    sess = get_authenticated_session(conn, request, require_csrf=True)
+    username = payload.username.strip().lower()
+
+    existing = conn.execute("SELECT id FROM admins WHERE username = ?", (username,)).fetchone()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Já existe um operador ou administrador cadastrado com o nome '{username}'.",
+        )
+
+    pass_hash = hash_password(payload.password)
+    now_str = iso_utc()
+
+    cursor = conn.execute(
+        """
+        INSERT INTO admins (username, password_hash, is_active, failed_attempts, created_at)
+        VALUES (?, ?, ?, 0, ?)
+        """,
+        (username, pass_hash, 1 if payload.is_active else 0, now_str),
+    )
+    new_id = cursor.lastrowid
+    conn.commit()
+
+    record_audit_log(
+        conn,
+        actor_username=sess["username"],
+        ip_address=_client_ip(request),
+        action="user.create",
+        target_type="admin",
+        target_id=username,
+        outcome="success",
+        details={"user_id": new_id, "is_active": payload.is_active},
+    )
+
+    created = conn.execute("SELECT * FROM admins WHERE id = ?", (new_id,)).fetchone()
+    return UserResponse(
+        id=int(created["id"]),
+        username=created["username"],
+        is_active=bool(created["is_active"]),
+        failed_attempts=int(created["failed_attempts"]),
+        locked_until=created["locked_until"],
+        created_at=created["created_at"],
+        last_login_at=created["last_login_at"],
+    )
+
+
+@app.post("/api/users/{user_id}/reset-password", response_model=GenericMessageResponse)
+def reset_user_password(
+    user_id: int,
+    payload: UserPasswordResetRequest,
+    request: Request,
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    sess = get_authenticated_session(conn, request, require_csrf=True)
+    existing = conn.execute("SELECT * FROM admins WHERE id = ?", (user_id,)).fetchone()
+    if not existing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuário não encontrado.")
+
+    pass_hash = hash_password(payload.new_password)
+    conn.execute(
+        """
+        UPDATE admins
+        SET password_hash = ?, failed_attempts = 0, locked_until = NULL
+        WHERE id = ?
+        """,
+        (pass_hash, user_id),
+    )
+
+    if user_id != sess["admin_id"]:
+        conn.execute("UPDATE sessions SET revoked = 1 WHERE admin_id = ?", (user_id,))
+
+    conn.commit()
+
+    record_audit_log(
+        conn,
+        actor_username=sess["username"],
+        ip_address=_client_ip(request),
+        action="user.reset_password",
+        target_type="admin",
+        target_id=existing["username"],
+        outcome="success",
+        details={"user_id": user_id},
+    )
+
+    return GenericMessageResponse(
+        ok=True,
+        message=f"Senha do operador '{existing['username']}' redefinida com sucesso.",
+    )
+
+
+@app.post("/api/users/{user_id}/toggle-status", response_model=UserResponse)
+def toggle_user_status(
+    user_id: int,
+    payload: UserStatusUpdateRequest,
+    request: Request,
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    sess = get_authenticated_session(conn, request, require_csrf=True)
+    existing = conn.execute("SELECT * FROM admins WHERE id = ?", (user_id,)).fetchone()
+    if not existing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuário não encontrado.")
+
+    if user_id == sess["admin_id"] and not payload.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Você não pode bloquear o seu próprio usuário logado.",
+        )
+
+    new_active = 1 if payload.is_active else 0
+    conn.execute("UPDATE admins SET is_active = ? WHERE id = ?", (new_active, user_id))
+
+    if not payload.is_active:
+        conn.execute("UPDATE sessions SET revoked = 1 WHERE admin_id = ?", (user_id,))
+
+    conn.commit()
+
+    action_name = "user.unblock" if payload.is_active else "user.block"
+    record_audit_log(
+        conn,
+        actor_username=sess["username"],
+        ip_address=_client_ip(request),
+        action=action_name,
+        target_type="admin",
+        target_id=existing["username"],
+        outcome="success",
+        details={"user_id": user_id, "is_active": payload.is_active},
+    )
+
+    updated = conn.execute("SELECT * FROM admins WHERE id = ?", (user_id,)).fetchone()
+    return UserResponse(
+        id=int(updated["id"]),
+        username=updated["username"],
+        is_active=bool(updated["is_active"]),
+        failed_attempts=int(updated["failed_attempts"]),
+        locked_until=updated["locked_until"],
+        created_at=updated["created_at"],
+        last_login_at=updated["last_login_at"],
+    )
+
+
+@app.delete("/api/users/{user_id}", response_model=GenericMessageResponse)
+def delete_user(
+    user_id: int,
+    request: Request,
+    conn: sqlite3.Connection = Depends(get_db),
+):
+    sess = get_authenticated_session(conn, request, require_csrf=True)
+    existing = conn.execute("SELECT * FROM admins WHERE id = ?", (user_id,)).fetchone()
+    if not existing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Usuário não encontrado.")
+
+    if user_id == sess["admin_id"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Você não pode excluir o seu próprio usuário logado.",
+        )
+
+    active_count = conn.execute(
+        "SELECT COUNT(*) AS total FROM admins WHERE id != ? AND is_active = 1", (user_id,)
+    ).fetchone()["total"]
+    if active_count < 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Operação negada: o sistema deve possuir pelo menos um usuário administrador ativo.",
+        )
+
+    conn.execute("DELETE FROM sessions WHERE admin_id = ?", (user_id,))
+    conn.execute("DELETE FROM admins WHERE id = ?", (user_id,))
+    conn.commit()
+
+    record_audit_log(
+        conn,
+        actor_username=sess["username"],
+        ip_address=_client_ip(request),
+        action="user.delete",
+        target_type="admin",
+        target_id=existing["username"],
+        outcome="success",
+        details={"user_id": user_id},
+    )
+
+    return GenericMessageResponse(
+        ok=True,
+        message=f"Usuário '{existing['username']}' excluído com sucesso.",
+    )
 
 
 @app.get("/api/audit-logs", response_model=list[AuditLogItem])

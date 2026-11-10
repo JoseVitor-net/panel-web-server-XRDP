@@ -120,3 +120,14 @@ export interface AuditLogItem {
   details: Record<string, unknown>;
 }
 
+export interface UserItem {
+  id: number;
+  username: string;
+  is_active: boolean;
+  failed_attempts: number;
+  locked_until: string | null;
+  created_at: string;
+  last_login_at: string | null;
+}
+
+

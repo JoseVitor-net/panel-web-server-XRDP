@@ -4,6 +4,7 @@ import {
   SystemOverviewTelemetry,
   TVFormPayload,
   TVItem,
+  UserItem,
 } from "./types";
 
 export class ApiError extends Error {
@@ -133,5 +134,70 @@ export const api = {
   listAuditLogs(limit = 60): Promise<AuditLogItem[]> {
     return requestJson<AuditLogItem[]>(`/api/audit-logs?limit=${limit}`);
   },
+
+  deleteTV(id: number, csrfToken: string): Promise<{ ok: boolean; message: string }> {
+    return requestJson<{ ok: boolean; message: string }>(
+      `/api/tvs/${id}`,
+      { method: "DELETE" },
+      csrfToken
+    );
+  },
+
+  listUsers(): Promise<UserItem[]> {
+    return requestJson<UserItem[]>("/api/users");
+  },
+
+  createUser(
+    payload: { username: string; password: string; is_active?: boolean },
+    csrfToken: string
+  ): Promise<UserItem> {
+    return requestJson<UserItem>(
+      "/api/users",
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+      csrfToken
+    );
+  },
+
+  resetUserPassword(
+    userId: number,
+    newPassword: string,
+    csrfToken: string
+  ): Promise<{ ok: boolean; message: string }> {
+    return requestJson<{ ok: boolean; message: string }>(
+      `/api/users/${userId}/reset-password`,
+      {
+        method: "POST",
+        body: JSON.stringify({ new_password: newPassword }),
+      },
+      csrfToken
+    );
+  },
+
+  toggleUserStatus(
+    userId: number,
+    isActive: boolean,
+    csrfToken: string
+  ): Promise<UserItem> {
+    return requestJson<UserItem>(
+      `/api/users/${userId}/toggle-status`,
+      {
+        method: "POST",
+        body: JSON.stringify({ is_active: isActive }),
+      },
+      csrfToken
+    );
+  },
+
+  deleteUser(userId: number, csrfToken: string): Promise<{ ok: boolean; message: string }> {
+    return requestJson<{ ok: boolean; message: string }>(
+      `/api/users/${userId}`,
+      { method: "DELETE" },
+      csrfToken
+    );
+  },
 };
+
 
